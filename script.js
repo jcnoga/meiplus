@@ -1,768 +1,1429 @@
 // --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
-const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional";
-const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
-const DB_KEY = 'MEI_SYSTEM_V11';
+ manter o finalDataToSave
+                }
+
+                // C. Enviar Dados Mesclados de volta para Nuvem
+                await userRef.set(finalDataToSave);
+                
+                this.isDirty = false;
+const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional                this.updateSyncStatus(true);
+                saveStatus.cloud = true;
+
+                if (isManual/Login?ReturnUrl=%2fEmissorNacional";
+const DEFAULT_URL_DAS = "https://wwwSync) showToast("Sincronização completa (Bidirecional)!", "success");
+
+            } catch(8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
+const DB_KEY = 'MEI_SYSTEM_V11';e) { 
+                console.error("Falha no Sync:", e); 
+                this.isDirty = true
 
 // Constantes da Licença
 const LIC_PAD_VAL = 13;
-const LIC_MULT_FACTOR = 9;
+const LIC_MULT;
+                this.updateSyncStatus(false);
+                let errorMsg = "Erro desconhecido na nu_FACTOR = 9;
 const LIC_YEAR_BASE = 1954;
 
-// --- CONFIGURAÇÃO FIREBASE ---
+// Configuraçãovem.";
+                if (e.code === 'permission-denied') errorMsg = "Sem permissão. Ver Firebase (Adicione suas chaves aqui)
 const firebaseConfig = {
-  apiKey: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo",
+  apiKey: "AIzaSyAYifique login.";
+                else if (e.code === 'unavailable') errorMsg = "Servidor indisponível.";
+06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo                saveStatus.error = errorMsg;
+                showToast(`Falha na Nuvem: ${errorMsg}`, "",
   authDomain: "projeto-bfed3.firebaseapp.com",
-  projectId: "projeto-bfed3",
-  storageBucket: "projeto-bfed3.firebasestorage.app",
+  projectId: "projetoerror");
+            }
+        } else {
+            this.isDirty = true;
+            this.update-bfed3",
+  storageBucket: "projeto-bfed3.firebasestorage.app",SyncStatus(false);
+            if(isManualSync && !navigator.onLine) showToast("Você está Offline. Sal
   messagingSenderId: "785289237066",
-  appId: "1:785289237066:web:8206fe2e1073db72d5ccb3"
+  appIdvo localmente.", "info");
+        }
+        
+        return saveStatus;
+    },
+
+    async load(): "1:785289237066:web:8206fe {
+        let data = null;
+        try {
+            const db = await this.initDB();
+2e1073db72d5ccb3"
 };
 
-// --- VARIÁVEIS GLOBAIS ---
-let appData = { currentUser: null, users: [], records: {}, irrfTable: [] };
-let isFirebaseReady = false;
-let currentCrudType = 'products'; 
-let currentListingType = 'clients'; 
-let currentFinanceFilter = 'all';
-
-const DEFAULT_IRRF = [
-    { id: 'irrf_1', max: 2259.20, rate: 0, deduction: 0 },
-    { id: 'irrf_2', max: 2826.65, rate: 7.5, deduction: 169.44 },
-    { id: 'irrf_3', max: 3751.05, rate: 15, deduction: 381.44 },
-    { id: 'irrf_4', max: 4664.68, rate: 22.5, deduction: 662.77 },
-    { id: 'irrf_5', max: 99999999, rate: 27.5, deduction: 896.00 }
-];
-
-// --- SISTEMA DE NOTIFICAÇÃO (TOAST) ---
-function showToast(message, type = 'info') {
+// --- FUNÇÃO AUXILIAR DE NOTIFICAÇÃO (TOAST) ---
+function showToast(message, type = 'info') {            data = await new Promise(resolve => {
+                const tx = db.transaction(this.storeName, 'readonly');
+                const req = tx.objectStore(this.storeName).get('main_data');
     const container = document.getElementById('toast-container');
     if (!container) return;
 
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     
-    let icon = type === 'success' ? '✅ ' : type === 'error' ? '❌ ' : 'ℹ️ ';
-    toast.innerText = icon + message;
-    container.appendChild(toast);
-
-    setTimeout(() => {
-        toast.style.animation = 'fadeOut 0.5s ease-out forwards';
-        setTimeout(() => toast.remove(), 500);
-    }, 4000);
-}
-
-function translateFirebaseError(error) {
-    console.warn("Firebase Error:", error);
-    if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') return "E-mail ou senha incorretos.";
-    if (error.code === 'auth/email-already-in-use') return "Este e-mail já está em uso.";
-    if (error.code === 'auth/network-request-failed') return "Sem conexão com a internet.";
-    if (error.code === 'permission-denied') return "Permissão negada. Verifique as Regras no Console.";
-    return error.message;
-}
-
-// --- SYNC ENGINE (LÓGICA DE MERGE E CONFLITOS) ---
-const SyncEngine = {
-    // Mescla arrays considerando Timestamp (_updatedAt) e Tombstones (Exclusões)
-    mergeArrays(localArr = [], cloudArr = [], tombstones = []) {
-        const mergedMap = new Map();
-
-        // 1. Adiciona itens da nuvem (se não estiverem excluídos)
-        cloudArr.forEach(item => {
-            if (!tombstones.some(t => t.id === item.id)) {
-                mergedMap.set(item.id, item);
-            }
-        });
-
-        // 2. Processa itens locais (Conflito: Vence o mais recente)
-        localArr.forEach(item => {
-            if (tombstones.some(t => t.id === item.id)) {
-                mergedMap.delete(item.id);
-            } else {
-                const cloudItem = mergedMap.get(item.id);
-                // Se não existe na nuvem OU Local é mais recente (timestamp maior)
-                if (!cloudItem || (item._updatedAt || 0) >= (cloudItem._updatedAt || 0)) {
-                    mergedMap.set(item.id, item);
-                }
-            }
-        });
-
-        return Array.from(mergedMap.values());
-    },
-
-    // Executa o merge completo do registro do usuário
-    mergeUserRecords(localRecord, cloudRecord) {
-        if (!cloudRecord) return localRecord;
-        if (!localRecord) return cloudRecord;
-
-        const localTomb = localRecord.tombstones || [];
-        const cloudTomb = cloudRecord.tombstones || [];
-        
-        // Cria lista única de exclusões (baseado no ID)
-        const uniqueTombstones = [...new Map([...localTomb, ...cloudTomb].map(item => [item.id, item])).values()];
-
-        const mergedRecord = {
-            ...localRecord,
-            ...cloudRecord,
-            tombstones: uniqueTombstones
-        };
-
-        const arraysToMerge = ['products', 'services', 'clients', 'suppliers', 'transactions', 'rpas', 'appointments'];
-
-        arraysToMerge.forEach(key => {
-            mergedRecord[key] = this.mergeArrays(
-                localRecord[key] || [],
-                cloudRecord[key] || [],
-                uniqueTombstones
-            );
-        });
-
-        return mergedRecord;
-    }
-};
-
-// --- DATA MANAGER (PERSISTÊNCIA E SYNC) ---
-const DataManager = {
-    dbName: 'MEI_DB_HYBRID',
-    storeName: 'mei_data',
-    isDirty: false, 
-    
-    async initDB() {
-        return new Promise((resolve, reject) => {
-            const req = indexedDB.open(this.dbName, 1);
-            req.onupgradeneeded = (e) => {
-                if (!e.target.result.objectStoreNames.contains(this.storeName)) {
-                    e.target.result.createObjectStore(this.storeName);
-                }
-            };
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
-        });
-    },
-
-    // Sincronização Inteligente
-    async smartSync(localData) {
-        // Validação estrita
-        if (!navigator.onLine) return { success: false, error: "Offline" };
-        if (!firebaseConfig.apiKey) return { success: false, error: "Sem Configuração" };
-        if (!localData.currentUser) return { success: false, error: "Usuário não logado" };
-
-        try {
-            const dbCloud = firebase.firestore();
-            const uid = localData.currentUser.id;
-            const userRef = dbCloud.collection('users').doc(uid);
-            
-            // 1. Busca dados da nuvem
-            const docSnap = await userRef.get();
-
-            // 2. Se não existir, faz upload inicial
-            if (!docSnap.exists) {
-                console.log("Criando registro inicial na nuvem...");
-                await userRef.set(JSON.parse(JSON.stringify(localData)));
-                return { success: true, method: 'upload_init' };
-            }
-
-            const cloudData = docSnap.data();
-            
-            // Garante inicialização de objetos
-            if (!localData.records[uid]) localData.records[uid] = createSeedData().records.placeholder_id;
-            if (!cloudData.records[uid]) cloudData.records[uid] = createSeedData().records.placeholder_id;
-
-            // 3. Realiza o Merge (Local + Cloud)
-            const mergedRecord = SyncEngine.mergeUserRecords(
-                localData.records[uid],
-                cloudData.records[uid]
-            );
-            
-            // 4. Prepara objeto final
-            let finalData = JSON.parse(JSON.stringify(localData));
-            finalData.records[uid] = mergedRecord;
-            
-            // 5. Atualiza Memória Local
-            appData.records[uid] = mergedRecord;
-            
-            // 6. Envia Merge para Nuvem
-            await userRef.set(finalData);
-            console.log("Dados sincronizados com sucesso.");
-            
-            return { success: true, mergedData: finalData, method: 'merge' };
-
-        } catch (e) {
-            console.error("Sync Error:", e);
-            return { success: false, error: translateFirebaseError(e) };
-        }
-    },
-
-    // Salvar (Local + Tentativa de Sync)
-    async save(data, isManualSync = false) {
-        let saveStatus = { local: false, cloud: false, error: null };
-
-        // 1. Salvar no IndexedDB (Prioridade Zero)
-        try {
-            const db = await this.initDB();
-            const tx = db.transaction(this.storeName, 'readwrite');
-            const sanitizedData = JSON.parse(JSON.stringify(data));
-            tx.objectStore(this.storeName).put(sanitizedData, 'main_data');
-            try { localStorage.setItem(DB_KEY, JSON.stringify(sanitizedData)); } catch(e){}
-            saveStatus.local = true;
-        } catch(e) { 
-            console.error("Local Save Error", e);
-            saveStatus.error = "Erro ao salvar no dispositivo.";
-            if (isManualSync) showToast("Erro Crítico: Falha no disco!", "error");
-            return saveStatus;
-        }
-
-        // 2. Tentar Sincronizar com Nuvem
-        // Se for sync manual, ignoramos checagem de "dirty" e forçamos o sync
-        if (navigator.onLine && isFirebaseReady && data.currentUser) {
-            
-            // CORREÇÃO: Garante que o toast apareça antes do processo
-            if (isManualSync) showToast("Conectando à nuvem...", "info");
-
-            const syncResult = await this.smartSync(data);
-            
-            if (syncResult.success) {
-                this.isDirty = false;
-                this.updateSyncStatus(true);
-                saveStatus.cloud = true;
-
-                // Se houve merge, salvar o resultado do merge localmente também
-                if (syncResult.mergedData) {
-                    Object.assign(appData, syncResult.mergedData);
-                    try {
-                        const db = await this.initDB();
-                        const tx = db.transaction(this.storeName, 'readwrite');
-                        tx.objectStore(this.storeName).put(JSON.parse(JSON.stringify(appData)), 'main_data');
-                    } catch(e) {}
-                    
-                    if (isManualSync) {
-                        showToast("Sincronização concluída com sucesso!", "success");
-                        refreshCurrentView(); // Atualiza a tela com novos dados
-                    }
-                } else if (isManualSync) {
-                    showToast("Dados enviados para a nuvem.", "success");
-                }
-            } else {
-                this.isDirty = true;
-                this.updateSyncStatus(false);
-                if (isManualSync) showToast(`Erro Nuvem: ${syncResult.error}`, "error");
-            }
-        } else {
-            this.isDirty = true;
-            this.updateSyncStatus(false);
-            if(isManualSync && !navigator.onLine) showToast("Você está Offline. Salvo localmente.", "info");
-        }
-        
-        return saveStatus;
-    },
-
-    async load() {
-        let data = null;
-        try {
-            const db = await this.initDB();
-            data = await new Promise(r => {
-                const tx = db.transaction(this.storeName, 'readonly');
-                const req = tx.objectStore(this.storeName).get('main_data');
-                req.onsuccess = () => r(req.result);
-                req.onerror = () => r(null);
+    let
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => resolve(null);
             });
-        } catch(e) {}
+        } catch(e) { console.warn("Erro IDB", e); icon = '';
+    if(type === 'success') icon = '✅ ';
+    if(type === 'error') icon = '❌ ';
+    if(type === 'info') icon = 'ℹ️ ';
+
+     }
 
         if (!data) {
             const ls = localStorage.getItem(DB_KEY);
-            if (ls) data = JSON.parse(ls);
+            if (toast.innerText = icon + message;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        ls) data = JSON.parse(ls);
         }
         return data;
     },
 
-    // CORREÇÃO: Função forceSync não verifica mais isDirty, forçando a atualização
-    async forceSync(currentData) {
+    asynctoast.style.animation = 'fadeOut 0.5s ease-out forwards';
+        setTimeout(() => toast loadCloudData(userId) {
+        if (navigator.onLine && firebaseConfig.apiKey) {
+            try.remove(), 500);
+    }, 4000);
+}
+
+// --- GEST {
+                const dbCloud = firebase.firestore();
+                const doc = await dbCloud.collection('users').OR DE DADOS HÍBRIDO (SMART SYNC V2) ---
+const DataManager = {
+doc(userId).get();
+                if (doc.exists) return doc.data();
+            } catch(    dbName: 'MEI_DB_HYBRID',
+    storeName: 'mei_data',
+e) { console.error("Erro cloud load", e); }
+        }
+        return null;
+    },
+
+    isDirty: false, 
+    
+    async initDB() {
+        return new Promise((resolve,    async forceSync(currentData) {
         if (currentData && currentData.currentUser) {
-            // Chama save com flag manual = true
-            await this.save(currentData, true);
-        } else {
-            this.updateSyncStatus(navigator.onLine);
+             reject) => {
+            const req = indexedDB.open(this.dbName, 1);
+            console.log("Reconexão detectada. Iniciando Sync...");
+            showToast("Reconectado! Sincronizandoreq.onupgradeneeded = (e) => {
+                const db = e.target.result;...", "info");
+            await this.save(currentData);
+            // Atualiza a UI após o merge
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    db.createObjectStore(this.storeName);
+                }
+            };
+            req.onsuccess = () => resolve (caso haja novos dados da nuvem)
+            if(currentCrudType) renderCrud(currentCrudType);
+            (req.result);
+            req.onerror = () => reject(req.error);
+        });
+    if(document.getElementById('view-agenda').classList.contains('hidden') === false) renderAgenda();
+            if},
+
+    // Sincronização Inteligente Bidirecional (Merge + Tombstones)
+    async smartSync(document.getElementById('view-financeiro').classList.contains('hidden') === false) renderTransactions();
+            (localData) {
+        if (!navigator.onLine || !firebaseConfig.apiKey || !localData.currentUser)updateDashboard();
         }
     },
 
     updateSyncStatus(isOnline) {
-        const el = document.getElementById('sync-indicator');
-        const userDisplay = document.getElementById('user-name-display');
-        if(el) {
-            el.className = isOnline ? 'sync-status sync-online' : 'sync-status sync-offline';
-            el.title = isOnline ? 'Sincronizado' : 'Offline / Pendente';
-            if(userDisplay) userDisplay.style.color = isOnline ? 'inherit' : '#ca8a04';
+        const el = {
+            return { success: false, error: "Offline ou não configurado" };
         }
+
+        try {
+ document.getElementById('sync-indicator');
+        const userNameDisplay = document.getElementById('user-name-display');            const dbCloud = firebase.firestore();
+            const userRef = dbCloud.collection('users').doc(local
+        if(el) {
+            if (isOnline) {
+                el.className = 'sync-status sync-online';
+                el.title = 'Sincronizado (Nuvem)';
+                ifData.currentUser.id);
+            const docSnap = await userRef.get();
+
+            // Se não existe na(userNameDisplay) userNameDisplay.style.color = 'inherit';
+            } else {
+                el.className nuvem, faz o upload inicial
+            if (!docSnap.exists) {
+                await userRef.set( = 'sync-status sync-offline';
+                el.title = 'Pendente Envio / Offline';
+                JSON.parse(JSON.stringify(localData)));
+                return { success: true, method: 'upload_init' };if(userNameDisplay) userNameDisplay.style.color = '#ca8a04';
+            }
+        
+            }
+
+            const cloudData = docSnap.data();
+            const currentUserId = localData.currentUser}
     }
 };
 
-// --- INITIALIZAÇÃO ---
-
-// Init Firebase
+// --- INICIALIZAÇÃO FIREBASE ---
 if (firebaseConfig.apiKey) {
-    try {
+.id;
+            
+            // Garante estruturas
+            if (!localData.records[currentUserId]) localData.records    try {
         firebase.initializeApp(firebaseConfig);
-        isFirebaseReady = true;
-
-        // AUTH OBSERVER: Gerencia sessão e recarregamento
-        firebase.auth().onAuthStateChanged((user) => {
-            if (user && !appData.currentUser) {
-                // Usuário está logado no Firebase, mas appData está vazio (F5 na página)
-                DataManager.load().then(localData => {
-                    if (localData) appData = localData;
-                    
-                    const uid = 'u_' + user.uid; // Prefixo para compatibilidade
-                    
-                    let appUser = {
-                        id: uid,
-                        name: user.displayName || user.email.split('@')[0],
-                        email: user.email,
-                        licenseExpire: Date.now() + (90 * 86400000),
-                        company: { reserve_rate: 10, prolabore_target: 4000 }
-                    };
-
-                    // Recupera user local para não perder configurações
-                    if (appData.users) {
-                        const existing = appData.users.find(u => u.id === uid);
-                        if (existing) appUser = existing;
-                    } else {
-                        appData.users = [appUser];
-                    }
-
-                    loginUser(appUser);
-                });
-            }
-        });
-        console.log("Firebase OK");
-    } catch(e) {
-        console.error("Firebase Init Fail", e);
-        showToast("Erro na configuração do Firebase", "error");
-    }
+    } catch(e) { console.error("Firebase[currentUserId] = {};
+            if (!cloudData.records[currentUserId]) cloudData.records[current Init Error", e); }
 }
+
+let appData = { currentUser: null, users: [], records: {},UserId] = {};
+
+            const localRec = localData.records[currentUserId];
+            const cloudRec = cloud irrfTable: [] };
+
+const DEFAULT_IRRF = [
+    { id: 'irrf_1Data.records[currentUserId];
+
+            // Listas que serão sincronizadas
+            const keysToSync = ['products', '', max: 2259.20, rate: 0, deduction: 0 },
+    services', 'clients', 'suppliers', 'transactions', 'rpas', 'appointments'];
+
+            // Lógica de{ id: 'irrf_2', max: 2826.65, rate: 7 Merge para cada lista
+            keysToSync.forEach(key => {
+                // Inicializa arrays se não existirem.5, deduction: 169.44 },
+    { id: 'irrf_3', max: 3751.05, rate: 15, deduction: 381.
+                if (!localRec[key]) localRec[key] = [];
+                if (!cloudRec[key44 },
+    { id: 'irrf_4', max: 4664.68]) cloudRec[key] = [];
+
+                // Recupera Tombstones (IDs excluídos)
+                const localDeleted, rate: 22.5, deduction: 662.77 },
+    { id: = localRec.tombstones || [];
+                const cloudDeleted = cloudRec.tombstones || [];
+
+ 'irrf_5', max: 99999999, rate: 27.                // Mapa final unificado
+                const mergedMap = new Map();
+
+                // 1. Processa Nu5, deduction: 896.00 }
+];
+
+let currentCrudType = 'products'; vem
+                cloudRec[key].forEach(item => {
+                    // Se foi deletado localmente recentemente, ignora
+
+let currentListingType = 'clients';
+let currentFinanceFilter = 'all';
 
 async function init() {
     window.addEventListener('online', () => DataManager.forceSync(appData));
-    window.addEventListener('offline', () => { DataManager.updateSyncStatus(false); showToast("Modo Offline", "info"); });
+    window.addEventListener                    if (localDeleted.some(t => t.id === item.id)) return;
+                    mergedMap.('offline', () => {
+        DataManager.updateSyncStatus(false);
+        showToast("Conexãoset(item.id, item);
+                });
+
+                // 2. Processa Local (Resolve conflitos por perdida. Modo Offline.", "info");
+    });
 
     const loadedData = await DataManager.load();
-    if (loadedData) appData = loadedData;
+ Data de Atualização)
+                localRec[key].forEach(item => {
+                    // Se foi deletado na    if (loadedData) appData = loadedData;
     
-    if (!appData.irrfTable || !appData.irrfTable.length) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
+    if (!appData.irrfTable nuvem, ignora
+                    if (cloudDeleted.some(t => t.id === item.id)) || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse( return;
 
-    // Verifica sessão local visualmente (Auth Observer fará o login real)
+                    if (mergedMap.has(item.id)) {
+                        const cloudItem = mergedMap.JSON.stringify(DEFAULT_IRRF));
+    
     const sessionUser = sessionStorage.getItem('mei_user_id');
-    if (!sessionUser) {
-        showAuth();
+    if (sessionUser) {
+        const user = appData.users.find(uget(item.id);
+                        // Vence quem tiver updatedAt maior (ou se não tiver, assume local como => u.id === sessionUser);
+        if (user) { loginUser(user); return; }
+ mais recente por ser interação ativa)
+                        const localTime = item.updatedAt || 0;
+                        const cloud    }
+    showAuth();
+}
+
+function showAuth() { document.getElementById('auth-screen').classListTime = cloudItem.updatedAt || 0;
+                        
+                        if (localTime >= cloudTime) {.remove('hidden'); document.getElementById('app-container').classList.add('hidden'); }
+
+async function saveData
+                            mergedMap.set(item.id, item);
+                        }
+                        // Se cloudTime > localTime(isManual = false) { 
+    return await DataManager.save(appData, isManual); , mantém o que já estava no map (cloudItem)
+                    } else {
+                        // Novo localmente
+                        merged
+}
+
+// Helper para marcar exclusão (Tombstone)
+function markAsDeleted(id) {
+    ifMap.set(item.id, item);
+                    }
+                });
+
+                // Atualiza a lista local (!appData.currentUser) return;
+    const rec = getUserData();
+    if (!rec.deleted_ com o resultado do merge
+                localRec[key] = Array.from(mergedMap.values());
+            });registry) rec.deleted_registry = [];
+    if (!rec.deleted_registry.includes(id)) {
+        rec.deleted_registry.push(id);
     }
 }
 
-function showAuth() { document.getElementById('auth-screen').classList.remove('hidden'); document.getElementById('app-container').classList.add('hidden'); }
+async function loginUser(user
+
+            // Merge de Tombstones (Para propagar exclusões futuras)
+            const allTombstones = [...(localRec.tombstones || []), ...(cloudRec.tombstones || [])];
+            // Remove duplicatas de tombstones mant) {
+    // Tenta obter versão mais recente da nuvem ao logar
+    if (navigator.onLine) {
+        showToast("Buscando dados na nuvem...", "info");
+        const cloudDataendo o mais recente
+            const uniqueTombstones = Array.from(new Map(allTombstones.map(item => [item.id, item])).values());
+            localRec.tombstones = uniqueTomb = await DataManager.loadCloudData(user.id);
+        if (cloudData) {
+            //stones;
+
+            // Merge de Configurações da Empresa (Last Write Wins baseado em updatedAt se existir, senão Local Se existir localmente, faz merge. Se não, usa cloud.
+            if (appData.records[user.id]) {
+                const merged = SyncEngine.mergeUserRecords(appData.records[user.id], cloudData.records[user.id]);
+                appData.records[user.id] = merged;
+                // Atualiza também)
+            if (localData.currentUser.company && cloudData.currentUser.company) {
+                 // Simpl configurações do usuário se a nuvem for mais recente (simplificado)
+                appData.users = appData.ificação: Assume local como verdade se houve edição recente, idealmente teria updatedAt na company
+            } else if (cloudData.currentUser.company && !localData.currentUser.company.name) {
+                localData.currentUser.company = cloudData.currentUser.company;
+            }
+
+            // Salva o resultado mesclado na Nuvem
+            constusers.map(u => u.id === user.id ? {...u, ...cloudData.currentUser} : u);
+ payload = JSON.parse(JSON.stringify(localData));
+            await userRef.set(payload);
+
+                user = appData.users.find(u => u.id === user.id);
+            } else {
+                appData = cloudData;
+                user = appData.users.find(u => u.id ===            // Retorna os dados mesclados para salvar Localmente
+            return { success: true, mergedData: localData, method: 'merge' };
+
+        } catch (e) {
+            console.error("Smart Sync Failed user.id) || user;
+            }
+            console.log("Login: Dados sincronizados/restaur:", e);
+            let errorMsg = "Erro na sincronização.";
+            if (e.code === 'permissionados.");
+        }
+    }
+
+    appData.currentUser = user; 
+    sessionStorage.setItem-denied') errorMsg = "Sem permissão. Verifique login.";
+            return { success: false, error: error('mei_user_id', user.id);
+    
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('app-container').classList.remove('hidden');
+    documentMsg };
+        }
+    },
+
+    // Save Principal
+    async save(data, isManualSync = false.getElementById('user-name-display').innerText = user.name;
+    
+    if(!appData.) {
+        let saveStatus = { local: false, cloud: false, error: null };
+
+        //records[user.id]) {
+        appData.records[user.id] = createSeedData().records 1. Persistência Local Imediata (Segurança de Dados)
+        try {
+            const db = await this.initDB();
+            const tx = db.transaction(this.storeName, 'readwrite');
+.placeholder_id; 
+        // Ajuste no ID do seed
+        appData.records[user.id].            const sanitizedData = JSON.parse(JSON.stringify(data));
+            tx.objectStore(this.products = []; // Limpa seed dummy se for novo
+    }
+    // Garante array de exclusões
+    ifstoreName).put(sanitizedData, 'main_data');
+            try { localStorage.setItem(DB_KEY(!appData.records[user.id].deleted_registry) appData.records[user.id].deleted, JSON.stringify(sanitizedData)); } catch(e) {}
+            saveStatus.local = true;_registry = [];
+    if(!appData.records[user.id].appointments) appData.records[
+        } catch(e) { 
+            console.error("Erro Crítico Local", e);
+            user.id].appointments = [];
+    
+    checkLicense(); navTo('dashboard'); loadFiscalReminders();saveStatus.error = "Falha ao salvar no dispositivo.";
+            if (isManualSync) showToast("Erro
+    DataManager.updateSyncStatus(navigator.onLine);
+    saveData(); 
+}
+
+function logout() { appData.currentUser = null; sessionStorage.removeItem('mei_user_id'); location.reload(); } Crítico: Falha no disco!", "error");
+            return saveStatus;
+        }
+
+        // 2. S
 
 function toggleAuth(screen) {
-    document.getElementById('login-form').classList.toggle('hidden', screen === 'register');
+    document.getElementById('login-form').classList.toggle('hidden',incronização Nuvem (Merge Strategy)
+        if (navigator.onLine && firebaseConfig.apiKey && firebase screen === 'register');
     document.getElementById('register-form').classList.toggle('hidden', screen !== 'register');
 }
 
-// --- HELPER FUNCTIONS (DATA MODELS) ---
+function handleGoogleLogin() {
+    if (!firebaseConfig.apiKey) {
+        alert.apps.length && data.currentUser) {
+            // Se for sync manual ou se estiver online, tenta o Smart Sync
+            const syncResult = await this.smartSync(data);
+            
+            if (syncResult.('Configure as chaves do Firebase.');
+        return;
+    }
+    const provider = new firebase.auth.success) {
+                this.isDirty = false;
+                this.updateSyncStatus(true);
+                GoogleAuthProvider();
+    firebase.auth().signInWithPopup(provider).then((result) => {
+        constsaveStatus.cloud = true;
+
+                // Se houve merge (dados novos da nuvem vieram), precisamos atualizar a user = result.user;
+        let appUser = appData.users.find(u => u.email === user.email);
+        if(!appUser) {
+            appUser = {
+                id: ' memória e o disco local novamente
+                if (syncResult.mergedData) {
+                    // Atualiza a referenciau_' + user.uid, 
+                name: user.displayName, 
+                email: user.email global (Cuidado com referencias circulares)
+                    Object.assign(appData, syncResult.mergedData);
+                    //, 
+                password: 'google_auth', 
+                licenseExpire: new Date().getTime() + ( Salva novamente localmente o resultado do merge
+                    const db = await this.initDB();
+                    const tx =90 * 86400000),
+                company: { reserve_rate: 10, prolabore_target: 4000 }
+            };
+            appData.users. db.transaction(this.storeName, 'readwrite');
+                    tx.objectStore(this.storeName).put(JSON.parse(JSON.stringify(appData)), 'main_data');
+                    
+                    //push(appUser);
+            appData.records[appUser.id] = { products: [], services: [], clients: Se foi manual, avisa e recarrega views se necessário
+                    if (isManualSync) {
+                         [], suppliers: [], transactions: [], rpas: [], appointments: [], deleted_registry: [] };
+        }
+        loginUser(appUser);
+    }).catch((error) => {
+        showToast("Erro Google: " + errorshowToast("Sincronização completa! Dados atualizados.", "success");
+                        // Recarrega a tela.message, "error");
+    });
+}
 
 function createSeedData() {
-    const now = Date.now();
+    const today = new atual para refletir dados vindos da nuvem
+                        const activeNav = document.querySelector('.nav-item.active');
+                        if (activeNav) activeNav.click();
+                    }
+                } else if (isManualSync) {
+                    showToast("Dados enviados para nuvem.", "success");
+                }
+
+            } else {
+                this.isDirty = true;
+                this.updateSyncStatus(false);
+                saveStatus.error = syncResult.error;
+                if (isManualSync) showToast(`Nuvem: ${ Date().toISOString().split('T')[0];
     return {
         records: {
             placeholder_id: {
-                products: [{id: 'p_ex', name: 'Produto Exemplo', price: 100, _updatedAt: now}], 
-                services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointments: [], tombstones: []
+                products: [], services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointmentssyncResult.error}`, "error");
+            }
+        } else {
+            this.isDirty = true: [], deleted_registry: []
             }
         }
     };
 }
 
-// Adiciona Timestamp de atualização ao objeto
+document.getElementById('register-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const email = document.getElementById('reg-email').value;
+    if (appData.users.find(u => u.;
+            this.updateSyncStatus(false);
+            if(isManualSync && !navigator.onLineemail === email)) { showToast('E-mail já existe!', 'error'); return; }
+    
+    const newUser = {
+        id: 'u_' + Date.now(), name: document.getElementById('reg-name').) showToast("Você está Offline. Salvo localmente.", "info");
+        }
+        
+        return savevalue, email: email,
+        password: document.getElementById('reg-password').value,
+        licenseExpireStatus;
+    },
+
+    async load() {
+        let data = null;
+        try {
+            const db =: new Date().getTime() + (90 * 86400000),
+        company await this.initDB();
+            data = await new Promise(resolve => {
+                const tx = db.: { reserve_rate: 10, prolabore_target: 4000 }
+    transaction(this.storeName, 'readonly');
+                const req = tx.objectStore(this.storeName};
+    appData.users.push(newUser); 
+    appData.records[newUser.id]).get('main_data');
+                req.onsuccess = () => resolve(req.result);
+ = { products: [], services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointments: [],                req.onerror = () => resolve(null);
+            });
+        } catch(e) { console. deleted_registry: [] };
+    
+    saveData(); loginUser(newUser);
+});
+
+document.getElementByIdwarn("Erro IDB", e); }
+        if (!data) { const ls = localStorage.getItem(DB('login-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const user_KEY); if (ls) data = JSON.parse(ls); }
+        return data;
+    }, = appData.users.find(u => u.email === document.getElementById('login-email').value && u.password === document.getElementById('login-password').value);
+    if (user) loginUser(user
+
+    async loadCloudData(userId) {
+        // Método mantido para compatibilidade de login, mas o); else showToast('Credenciais inválidas.', 'error');
+});
+
+function navTo(viewId) { smartSync assume a carga principal
+        if (navigator.onLine && firebaseConfig.apiKey && firebase.apps.
+    document.querySelectorAll('main section').forEach(el => el.classList.add('hidden'));
+    documentlength) {
+            try {
+                const dbCloud = firebase.firestore();
+                const doc = await db.getElementById('view-' + viewId).classList.remove('hidden');
+    document.querySelectorAll('.nav-itemCloud.collection('users').doc(userId).get();
+                if (doc.exists) return doc.data').forEach(el => el.classList.remove('active'));
+    const btn = Array.from(document.();
+            } catch(e) { console.error("Erro loadCloud", e); }
+        }
+        return nullquerySelectorAll('.nav-item')).find(el => el.getAttribute('onclick').includes(viewId));
+    if;
+    },
+
+    async forceSync(currentData) {
+        if (this.isDirty && current(btn) btn.classList.add('active');
+    
+    if(viewId === 'dashboard') updateData) {
+            console.log("Reconectado. Sincronizando...");
+            showToast("ConDashboard();
+    if(viewId === 'listagens') switchListing('clients');
+    if(viewIdexão retomada. Sincronizando...", "info");
+            await this.save(currentData, true); // Usa === 'financeiro') renderTransactions();
+    if(viewId === 'cadastros') renderCrud(current modo manual para forçar feedback visual e merge
+        } else {
+            this.updateSyncStatus(true);CrudType);
+    if(viewId === 'agenda') renderAgenda();
+    if(viewId === 'fiscal') {
+        renderIrrf();
+        const comp = appData.currentUser.company || {};
+        
+        }
+    },
+
+    updateSyncStatus(isOnline) {
+        const el = document.getElementById('sync-indicator');
+        const userNameDisplay = document.getElementById('user-name-display');
+        ifdocument.getElementById('link-emissor').href = comp.url_fiscal || DEFAULT_URL_FISCAL;(el) {
+            if (isOnline) {
+                el.className = 'sync-status sync-
+        document.getElementById('link-das').href = comp.url_das || DEFAULT_URL_DAS;
+    }
+    if(viewId === 'configuracoes') loadSettings();
+    if(viewIdonline';
+                el.title = 'Sincronizado (Nuvem)';
+                if(userNameDisplay === 'rpa') loadRPAOptions();
+}
+
+function loadSettings() {
+    const c = app) userNameDisplay.style.color = 'inherit';
+            } else {
+                el.className = 'syncData.currentUser.company || {};
+    document.getElementById('conf-company-name').value = c.name-status sync-offline';
+                el.title = 'Pendente Envio (Local)';
+                if(||''; 
+    document.getElementById('conf-cnpj').value = c.cnpj||''; 
+userNameDisplay) userNameDisplay.style.color = '#ca8a04';
+            }
+        }
+    }
+};
+
+// --- INICIALIZAÇÃO FIREBASE ---
+if (firebaseConfig.apiKey) {
+    document.getElementById('conf-address').value = c.address||''; 
+    document.getElementById('    try {
+        firebase.initializeApp(firebaseConfig);
+        console.log("Firebase Initialized");
+    conf-phone').value = c.phone||''; 
+    document.getElementById('conf-whatsapp').value = c.whatsapp||'';
+    document.getElementById('conf-url-fiscal').value = c.url} catch(e) { 
+        console.error("Firebase Init Error", e);
+        showToast("_fiscal || DEFAULT_URL_FISCAL;
+    document.getElementById('conf-url-das').value =Erro Config Firebase", "error");
+    }
+}
+
+let appData = { currentUser: null, users: [], records c.url_das || DEFAULT_URL_DAS;
+    document.getElementById('conf-reserve-rate').: {}, irrfTable: [] };
+
+const DEFAULT_IRRF = [
+    { id: 'irrf_value = c.reserve_rate || 10;
+    document.getElementById('conf-prolabore-1', max: 2259.20, rate: 0, deduction: 0 },
+target').value = c.prolabore_target || 4000;
+    const adminDiv =    { id: 'irrf_2', max: 2826.65, rate:  document.getElementById('admin-tools');
+    if (appData.currentUser.email === 'jcnvap@7.5, deduction: 169.44 },
+    { id: 'irrf_3gmail.com') adminDiv.classList.remove('hidden'); else adminDiv.classList.add('hidden');
+', max: 3751.05, rate: 15, deduction: 381}
+
+function adminFillData() {
+    if (appData.currentUser.email !== 'jcnvap@.44 },
+    { id: 'irrf_4', max: 4664.6gmail.com') return;
+    if (!confirm('ATENÇÃO: Isso preencherá o sistema com dados fict8, rate: 22.5, deduction: 662.77 },
+    { idícios. Continuar?')) return;
+    const today = new Date();
+    const formatDate = (date): 'irrf_5', max: 99999999, rate: 27 => date.toISOString().split('T')[0];
+    appData.currentUser.company = { name: ".5, deduction: 896.00 }
+];
+
+let currentCrudType = 'products';Empresa Modelo Tech Ltda", cnpj: "12.345.678/000 
+let currentListingType = 'clients';
+let currentFinanceFilter = 'all';
+
+async function init() {
+    window.addEventListener('online', () => DataManager.forceSync(appData));
+    window.1-90", address: "Av. Paulista, 1000", phone: "(11) 98765-4321", whatsapp: "(11) 98765-4addEventListener('offline', () => {
+        DataManager.updateSyncStatus(false);
+        showToast("Modo Offline At321", role: "both", url_fiscal: DEFAULT_URL_FISCAL, url_das:ivado", "info");
+    });
+
+    const loadedData = await DataManager.load();
+    if ( DEFAULT_URL_DAS, reserve_rate: 15, prolabore_target: 500loadedData) appData = loadedData;
+    
+    if (!appData.irrfTable || appData0 };
+    const rec = appData.records[appData.currentUser.id];
+    // Seed básico.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify com timestamp
+    const ts = Date.now();
+    rec.clients = [{id: 'c1',(DEFAULT_IRRF));
+    
+    const sessionUser = sessionStorage.getItem('mei_user_id');
+    if (sessionUser) {
+        const user = appData.users.find(u => u. name: 'Cliente A', _updatedAt: ts}];
+    rec.transactions = [{id: 't1', type: 'receita', value: 100, date: formatDate(today), _updatedAt: ts}];
+    saveData(); showToast('Dados de teste gerados!', 'success'); location.reload();
+id === sessionUser);
+        if (user) { loginUser(user); return; }
+    }
+    showAuth();
+}
+
+function showAuth() { document.getElementById('auth-screen').classList.remove('}
+
+function adminClearData() {
+    if (appData.currentUser.email !== 'jcnvap@hidden'); document.getElementById('app-container').classList.add('hidden'); }
+
+async function saveData(isManualgmail.com') return;
+    if (!confirm('PERIGO: Isso apagará TUDO.')) return;
+ = false) { 
+    return await DataManager.save(appData, isManual); 
+}
+
+    appData.records[appData.currentUser.id] = { products: [], services: [], clients: [],// Helper para Registrar Exclusão (Tombstone)
+function registerDeletion(id) {
+    if (!appData.currentUser) return;
+    const rec = appData.records[appData.currentUser.id];
+ suppliers: [], transactions: [], rpas: [], appointments: [], deleted_registry: [] };
+    saveData(); showToast('Sistema limpo.', 'info'); location.reload();
+}
+
+function saveCompanyData(e) {
+    if (!rec.tombstones) rec.tombstones = [];
+    // Adiciona o ID à    e.preventDefault();
+    const companyData = {
+        name: document.getElementById('conf-company-name').value,
+        cnpj: document.getElementById('conf-cnpj').value,
+        address: document. lista de excluídos com timestamp
+    rec.tombstones.push({ id: id, deletedAt: Date.now() });
+}
+
+// Helper para Adicionar Timestamp em Objetos
 function stampObject(obj) {
-    obj._updatedAt = Date.now();
+    objgetElementById('conf-address').value,
+        phone: document.getElementById('conf-phone').value,
+        whatsapp: document.getElementById('conf-whatsapp').value,
+        role: document.getElementById('conf-role')..updatedAt = Date.now();
     return obj;
 }
 
-// Registra exclusão para o Sync (Tombstone)
-function registerDeletion(id) {
-    if (!appData.currentUser) return;
-    const uid = appData.currentUser.id;
-    if (!appData.records[uid]) return;
-    
-    if (!appData.records[uid].tombstones) appData.records[uid].tombstones = [];
-    appData.records[uid].tombstones.push({ id: id, deletedAt: Date.now() });
+async function loginUser(user) {value,
+        url_fiscal: document.getElementById('conf-url-fiscal').value,
+        url_
+    // Tenta merge inicial se online
+    if (navigator.onLine) {
+        const cloudData =das: document.getElementById('conf-url-das').value,
+        reserve_rate: parseFloat(document. await DataManager.loadCloudData(user.id);
+        if (cloudData) {
+            // MesgetElementById('conf-reserve-rate').value),
+        prolabore_target: parseFloat(document.getElementById('conf-prolabore-target').value)
+    };
+    appData.currentUser.company = companyDataclagem simples inicial para garantir que temos dados antes de renderizar
+            // O SmartSync completo rodará no saveData;
+    const idx = appData.users.findIndex(u=>u.id===appData.currentUser.
+            appData = cloudData;
+            user = appData.users.find(u => u.id ===id); 
+    appData.users[idx] = appData.currentUser; 
+    saveData(); showToast('Configurações salvas!', 'success');
 }
 
-function refreshCurrentView() {
-    const activeNav = document.querySelector('.nav-item.active');
-    if (activeNav) activeNav.click();
-}
-
-// --- AUTENTICAÇÃO E LOGIN ---
-
-// Login
-document.getElementById('login-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    if (!isFirebaseReady) return showToast("Firebase não configurado.", "error");
-
-    const email = document.getElementById('login-email').value;
-    const password = document.getElementById('login-password').value;
-
-    showToast("Entrando...", "info");
-
-    firebase.auth().signInWithEmailAndPassword(email, password)
-    .then((userCredential) => {
-        // Observer cuidará do resto, mas podemos acelerar
-        const uid = 'u_' + userCredential.user.uid;
-        const localUser = (appData.users || []).find(u => u.id === uid);
-        if (localUser) loginUser(localUser);
-    })
-    .catch((error) => showToast(translateFirebaseError(error), "error"));
-});
-
-// Registro
-document.getElementById('register-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    if (!isFirebaseReady) return showToast("Firebase não configurado.", "error");
-
-    const email = document.getElementById('reg-email').value;
-    const password = document.getElementById('reg-password').value;
-    const name = document.getElementById('reg-name').value;
-    
-    showToast("Criando conta...", "info");
-
-    firebase.auth().createUserWithEmailAndPassword(email, password)
-    .then((userCredential) => {
-        const user = userCredential.user;
-        user.updateProfile({ displayName: name });
-        
-        const newUser = {
-            id: 'u_' + user.uid,
-            name: name, email: email,
-            licenseExpire: Date.now() + (90 * 86400000),
-            company: { reserve_rate: 10, prolabore_target: 4000 }
-        };
-
-        if (!appData.users) appData.users = [];
-        appData.users.push(newUser);
-        appData.records[newUser.id] = createSeedData().records.placeholder_id;
-        appData.records[newUser.id].products = []; // Limpa dummy data
-
-        loginUser(newUser);
-        showToast("Bem-vindo!", "success");
-    })
-    .catch((error) => showToast(translateFirebaseError(error), "error"));
-});
-
-function handleGoogleLogin() {
-    if (!isFirebaseReady) return showToast("Firebase não configurado.", "error");
-    const provider = new firebase.auth.GoogleAuthProvider();
-    firebase.auth().signInWithPopup(provider).catch(e => showToast(translateFirebaseError(e), "error"));
-}
-
-async function loginUser(user) {
-    appData.currentUser = user; 
-    sessionStorage.setItem('mei_user_id', user.id);
-    
-    // Garante estrutura de dados
-    if(!appData.records[user.id]) {
-        appData.records[user.id] = createSeedData().records.placeholder_id;
-        appData.records[user.id].products = [];
-    }
-    
-    // Garante arrays críticos
-    ['tombstones', 'appointments', 'rpas', 'transactions', 'clients', 'suppliers', 'products', 'services'].forEach(k => {
-        if(!appData.records[user.id][k]) appData.records[user.id][k] = [];
-    });
-
-    document.getElementById('auth-screen').classList.add('hidden');
-    document.getElementById('app-container').classList.remove('hidden');
-    document.getElementById('user-name-display').innerText = user.name;
-    
-    checkLicense(); 
-    navTo('dashboard'); 
-    loadFiscalReminders();
-    
-    DataManager.updateSyncStatus(navigator.onLine);
-    saveData(); // Sync Inicial
-}
-
-function logout() { 
-    if(isFirebaseReady) firebase.auth().signOut();
-    appData.currentUser = null; 
-    sessionStorage.removeItem('mei_user_id'); 
-    location.reload(); 
-}
-
-// --- NAVEGAÇÃO E VIEWS ---
-
-function navTo(viewId) {
-    document.querySelectorAll('main section').forEach(el => el.classList.add('hidden'));
-    document.getElementById('view-' + viewId).classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-    const btn = Array.from(document.querySelectorAll('.nav-item')).find(el => el.getAttribute('onclick').includes(viewId));
-    if(btn) btn.classList.add('active');
-    
-    if(viewId === 'dashboard') updateDashboard();
-    if(viewId === 'listagens') switchListing('clients');
-    if(viewId === 'financeiro') renderTransactions();
-    if(viewId === 'cadastros') renderCrud(currentCrudType);
-    if(viewId === 'agenda') renderAgenda();
-    if(viewId === 'fiscal') renderIrrf();
-    if(viewId === 'configuracoes') loadSettings();
-    if(viewId === 'rpa') loadRPAOptions();
-}
-
-// --- FUNCIONALIDADES (CRUD, AGENDA, FINANCEIRO) ---
-
-function getUserData() { return appData.records[appData.currentUser.id]; }
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
-
-// Dashboard
 function updateDashboard() {
     const t = getUserData().transactions || []; 
     const currentMonth = new Date().getMonth();
-    const currentYear = new Date().getFullYear();
-    const reserveRate = appData.currentUser.company?.reserve_rate || 10;
-    const prolaboreTarget = appData.currentUser.company?.prolabore_target || 4000;
+    const currentYear = new user.id) || user;
+        }
+    }
+
+    appData.currentUser = user; 
+    sessionStorage.setItem('mei_user_id', user.id);
     
-    let income = 0; let expense = 0; let totalReserve = 0; let totalProlabore = 0;
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('app-container').classList.remove(' Date().getFullYear();
+    const reserveRate = appData.currentUser.company?.reserve_rate || 10;hidden');
+    document.getElementById('user-name-display').innerText = user.name;
     
+    
+    const prolaboreTarget = appData.currentUser.company?.prolabore_target || 40if(!appData.records[user.id]) {
+        appData.records[user.id] = create00;
+    let income = 0; let expense = 0; let totalReserve = 0;SeedData().records[user.id] || { 
+            products: [], services: [], clients: [], suppliers let totalProlabore = 0;
     t.forEach(x => {
-        const d = new Date(x.date);
-        const isCurrentMonth = d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+        const d = new: [], transactions: [], rpas: [], appointments: [], tombstones: [] 
+        };
+    } Date(x.date);
+        const isCurrentMonth = d.getMonth() === currentMonth && d.getFullYear
+    
+    // Garante array de tombstones
+    if(!appData.records[user.id].tomb() === currentYear;
         if (x.type === 'receita') {
-            if (isCurrentMonth) {
+            if (isCurrentMonth) {stones) appData.records[user.id].tombstones = [];
+    if(!appData.records
                 income += x.value;
-                const reserveAmount = x.value * (reserveRate / 100);
+                const reserveAmount = x.value * (reserveRate / 1[user.id].appointments) appData.records[user.id].appointments = [];
+    
+    check00);
                 totalReserve += reserveAmount;
                 const remainder = x.value - reserveAmount;
-                const needed = prolaboreTarget - totalProlabore;
-                if (needed > 0) totalProlabore += (remainder >= needed) ? needed : remainder;
-            }
-        } else { if (isCurrentMonth) expense += x.value; }
-    });
+License(); navTo('dashboard'); loadFiscalReminders();
     
-    document.getElementById('dash-income').innerText = `R$ ${income.toFixed(2)}`;
-    document.getElementById('dash-expense').innerText = `R$ ${expense.toFixed(2)}`;
-    document.getElementById('dash-balance').innerText = `R$ ${(income-expense).toFixed(2)}`;
-    document.getElementById('reserve-percent-display').innerText = reserveRate;
-    document.getElementById('dash-reserve').innerText = `R$ ${totalReserve.toFixed(2)}`;
-    document.getElementById('dash-prolabore').innerText = `R$ ${totalProlabore.toFixed(2)}`;
-    document.getElementById('dash-prolabore-target').innerText = `Meta: R$ ${prolaboreTarget.toFixed(2)}`;
+    DataManager.updateSyncStatus(navigator.                const needed = prolaboreTarget - totalProlabore;
+                if (needed > 0) totalonLine);
+    saveData(); // Salva e dispara Sync
 }
 
-// Agenda
+function logout() { appData.currentUserProlabore += (remainder >= needed) ? needed : remainder;
+            }
+        } else { if ( = null; sessionStorage.removeItem('mei_user_id'); location.reload(); }
+
+function toggleAuth(screenisCurrentMonth) expense += x.value; }
+    });
+    document.getElementById('dash-income').) {
+    document.getElementById('login-form').classList.toggle('hidden', screen === 'register');
+innerText = `R$ ${income.toFixed(2)}`;
+    document.getElementById('dash-expense').innerText =    document.getElementById('register-form').classList.toggle('hidden', screen !== 'register');
+}
+
+function `R$ ${expense.toFixed(2)}`;
+    document.getElementById('dash-balance').innerText = `R handleGoogleLogin() {
+    if (!firebaseConfig.apiKey) {
+        alert('Simulação: Login com$ ${(income-expense).toFixed(2)}`;
+    document.getElementById('reserve-percent-display').innerText = Google realizado! (Configure as chaves do Firebase para ativar)');
+        return;
+    }
+    const provider reserveRate;
+    document.getElementById('dash-reserve').innerText = `R$ ${totalReserve.toFixed( = new firebase.auth.GoogleAuthProvider();
+    firebase.auth().signInWithPopup(provider).then((result2)}`;
+    document.getElementById('dash-prolabore').innerText = `R$ ${totalProlabore) => {
+        const user = result.user;
+        let appUser = appData.users.find.toFixed(2)}`;
+    document.getElementById('dash-prolabore-target').innerText = `Meta:(u => u.email === user.email);
+        if(!appUser) {
+            appUser = R$ ${prolaboreTarget.toFixed(2)}`;
+}
+
 function renderAgenda(filter = '') {
-    const listData = getUserData().appointments || [];
-    let list = listData.sort((a,b) => new Date(a.date+'T'+a.time) - new Date(b.date+'T'+b.time));
-    
+ {
+                id: 'u_' + user.uid, 
+                name: user.displayName, 
+    if(!getUserData().appointments) getUserData().appointments = [];
+    let list = getUserData().appointments.sort((a,b) => new Date(a.date+'T'+a.time) - new Date(                email: user.email, 
+                password: 'google_auth', 
+                licenseExpire: new Date().getTime() + (90 * 86400000),
+                company: {b.date+'T'+b.time));
     if (filter === 'today') {
-        const today = new Date().toISOString().split('T')[0];
-        list = list.filter(a => a.date === today);
+        const today reserve_rate: 10, prolabore_target: 4000 }
+            };
+ = new Date().toISOString().split('T')[0];
+        list = list.filter(a => a.            appData.users.push(appUser);
+            appData.records[appUser.id] =date === today);
     } else if (!filter) {
-        const inputDate = document.getElementById('agenda-filter-date').value;
-        if(inputDate) list = list.filter(a => a.date === inputDate);
+        const inputDate = document.getElementById('agenda createSeedData().records[appUser.id]; 
+        }
+        loginUser(appUser);
+-filter-date').value;
+        if(inputDate) list = list.filter(a => a.    }).catch((error) => {
+        showToast("Erro Google: " + error.message, "error");
+    date === inputDate);
     }
-    
     const container = document.getElementById('agenda-list');
-    container.innerHTML = '';
-    
-    if (list.length === 0) { 
-        container.innerHTML = '<p class="text-center p-4" style="grid-column: 1/-1;">Nenhum agendamento encontrado.</p>'; 
-        return; 
-    }
-    
-    const statusMap = { 'agendado': { label: 'Agendado', class: 'bg-scheduled', card: 'status-agendado' }, 'concluido': { label: 'Concluído', class: 'bg-done', card: 'status-concluido' }, 'cancelado': { label: 'Cancelado', class: 'bg-canceled', card: 'status-cancelado' } };
-    
+    container});
+}
+
+function createSeedData() {
+    const today = new Date().toISOString().split('T')[.innerHTML = '';
+    if (list.length === 0) { container.innerHTML = '<p class="0];
+    const now = Date.now();
+    // Adicionando updatedAt aos seeds
+    return {text-center p-4" style="grid-column: 1/-1;">Nenhum agendamento encontrado.</p
+        records: {
+            placeholder_id: {
+                products: [{id: 'p_ex',>'; return; }
+    const statusMap = { 'agendado': { label: 'Agendado', name: 'Produto Exemplo A', price: 100.00, description: 'Produto para teste class: 'bg-scheduled', card: 'status-agendado' }, 'concluido': { label', updatedAt: now}], 
+                services: [{id: 's_ex', name: 'Serviço: 'Concluído', class: 'bg-done', card: 'status-concluido' }, ' Exemplo B', price: 200.00, description: 'Serviço para teste', updatedAtcancelado': { label: 'Cancelado', class: 'bg-canceled', card: 'status-cancelado: now}], 
+                clients: [{id: 'c_ex', name: 'Cliente Teste', phone' } };
     list.forEach(a => {
-        const st = statusMap[a.status] || statusMap['agendado'];
-        const formattedDate = a.date.split('-').reverse().join('/');
+        const st = statusMap[a.status]: '(11) 99999-9999', address: 'Rua Exemplo || statusMap['agendado'];
+        const formattedDate = a.date.split('-').reverse().join, 100', cnpj_cpf: '000.000.000-0('/');
         const card = document.createElement('div');
-        card.className = `stat-card agenda-card ${st.card}`;
+        card.className = `stat-card agenda-0', contact_person: 'João', email: 'cliente@teste.com', updatedAt: now}], 
+card ${st.card}`;
         card.innerHTML = `
-            <div class="flex justify-between items-start mb-2"><span class="badge ${st.class}">${st.label}</span><div class="text-sm font-bold text-light">${formattedDate} - ${a.time}</div></div>
-            <h3 class="mb-1">${a.title}</h3>
-            <p class="text-sm mb-1"><strong>Cliente:</strong> ${a.client_name}</p>
-            <p class="text-sm mb-2 text-light">${a.service_desc || 'Sem descrição'}</p>
-            <div class="flex justify-between items-center mt-2 border-t pt-2">
-                <div class="text-sm"><span class="${a.pay_status === 'pago' ? 'text-success font-bold' : 'text-warning'}">${a.pay_status === 'pago' ? '💲 Pago' : '⏳ Pendente'}</span> - R$ ${parseFloat(a.value).toFixed(2)}</div>
-                <div><button class="action-btn btn-warning" onclick="editAppointment('${a.id}')">✏️</button><button class="action-btn btn-danger" onclick="deleteAppointment('${a.id}')">🗑️</button></div>
+            <div class="flex justify-between items                suppliers: [{id: 'f_ex', name: 'Fornecedor Teste', phone: '(1-start mb-2"><span class="badge ${st.class}">${st.label}</span><div class="1) 88888-8888', address: 'Av Exemplo, 20text-sm font-bold text-light">${formattedDate} - ${a.time}</div></div>
+            <0', cnpj_cpf: '00.000.000/0001-0h3 class="mb-1">${a.title}</h3>
+            <p class="text-sm mb-0', contact_person: 'Maria', email: 'fornecedor@teste.com', updatedAt: now}],1"><strong>Cliente:</strong> ${a.client_name}</p>
+            <p class="text-sm 
+                transactions: [
+                    {id: 't_ex1', type: 'receita', category mb-2 text-light">${a.service_desc || 'Sem descrição'}</p>
+            <div: 'Venda de produto', value: 150.00, date: today, obs: ' class="flex justify-between items-center mt-2 border-t pt-2">
+                <div classVenda inicial de teste', entity: 'Cliente Teste', updatedAt: now},
+                    {id: 't="text-sm"><span class="${a.pay_status === 'pago' ? 'text-success font_ex2', type: 'despesa', category: 'Despesas Operacionais', value: 50-bold' : 'text-warning'}">${a.pay_status === 'pago' ? '💲 Pago' : '⏳ Pendente'}</span> - R$ ${parseFloat(a.value).toFixed(2)}</div>
+.00, date: today, obs: 'Despesa inicial de teste', entity: 'Fornecedor Teste', updatedAt: now}
+                ], 
+                rpas: [],
+                appointments: [],
+                                <div><button class="action-btn btn-warning" onclick="editAppointment('${a.id}')">✏tombstones: []
+            }
+        }
+    };
+}
+
+document.getElementById('register-form️</button><button class="action-btn btn-danger" onclick="deleteAppointment('${a.id}')">').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const email = document.getElementById🗑️</button></div>
             </div>`;
         container.appendChild(card);
     });
 }
 
-function openAppointmentModal(appt = null) {
+('reg-email').value;
+    if (appData.users.find(u => u.email ===function openAppointmentModal(appt = null) {
     document.getElementById('form-appointment').reset();
-    const clientSelect = document.getElementById('appt-client-select');
-    clientSelect.innerHTML = '<option value="">Selecionar Cliente...</option>';
-    (getUserData().clients || []).forEach(c => { clientSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`; });
-    
+     email)) {
+        showToast('E-mail já existe!', 'error');
+        return;
+    }const clientSelect = document.getElementById('appt-client-select');
+    clientSelect.innerHTML = '<option value
+    const newUser = {
+        id: 'u_' + Date.now(), name: document.getElementById('="">Selecionar Cliente...</option>';
+    (getUserData().clients||[]).forEach(c => { clientSelect.innerHTML +=reg-name').value, email: email,
+        password: document.getElementById('reg-password').value,
+        licenseExpire: new Date().getTime() + (90 * 86400000 `<option value="${c.id}">${c.name}</option>`; });
     if (appt) {
         document.getElementById('appt-id').value = appt.id;
-        document.getElementById('appt-title').value = appt.title;
-        document.getElementById('appt-date').value = appt.date;
+        document.getElementById('appt-title),
+        company: { reserve_rate: 10, prolabore_target: 400').value = appt.title;
+        document.getElementById('appt-date').value = appt.date0 }
+    };
+    appData.users.push(newUser); 
+    const seed = createSeedData().records.placeholder_id;
+    appData.records[newUser.id] = seed;
+    ;
         document.getElementById('appt-time').value = appt.time;
-        document.getElementById('appt-client-name').value = appt.client_name;
-        document.getElementById('appt-client-phone').value = appt.client_phone;
+        document.getElementById('saveData(); loginUser(newUser);
+});
+
+document.getElementById('login-form').addEventListener('submit', (appt-client-name').value = appt.client_name;
+        document.getElementById('appt-cliente) => {
+    e.preventDefault();
+    const user = appData.users.find(u =>-phone').value = appt.client_phone;
         document.getElementById('appt-desc').value = appt.service_desc;
-        document.getElementById('appt-value').value = appt.value;
+        document.getElementById('appt-value').value = appt.value; u.email === document.getElementById('login-email').value && u.password === document.getElementById('login-password').value);
+    if (user) { loginUser(user); } else { showToast('Credenciais
         document.getElementById('appt-status').value = appt.status;
-        document.getElementById('appt-pay-method').value = appt.pay_method;
-        document.getElementById('appt-pay-status').value = appt.pay_status;
-        document.getElementById('appt-obs').value = appt.obs;
+        document.getElementById('appt inválidas.', 'error'); }
+});
+
+function navTo(viewId) {
+    document.querySelectorAll('-pay-method').value = appt.pay_method;
+        document.getElementById('appt-pay-main section').forEach(el => el.classList.add('hidden'));
+    document.getElementById('view-' +status').value = appt.pay_status;
+        document.getElementById('appt-obs').value = app viewId).classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(el => elt.obs;
     } else {
         document.getElementById('appt-id').value = '';
-        document.getElementById('appt-date').valueAsDate = new Date();
+        .classList.remove('active'));
+    const btn = Array.from(document.querySelectorAll('.nav-item')).document.getElementById('appt-date').valueAsDate = new Date();
         document.getElementById('appt-status').value = 'agendado';
     }
-    document.getElementById('modal-appointment').classList.remove('hidden');
+    document.getElementById('modal-appointment').classList.removefind(el => el.getAttribute('onclick').includes(viewId));
+    if(btn) btn.classList.add('active');
+    
+    if(viewId === 'dashboard') updateDashboard();
+    if(('hidden');
 }
 
 function fillAppointmentClient() {
     const id = document.getElementById('appt-client-select').value;
-    if(id) { const c = getUserData().clients.find(x => x.id === id); if(c) { document.getElementById('appt-client-name').value = c.name; document.getElementById('appt-client-phone').value = c.phone || ''; } }
+    if(id) { const c = getUserData().clients.find(x =>viewId === 'listagens') switchListing('clients');
+    if(viewId === 'financeiro') renderTransactions();
+    if(viewId === 'cadastros') renderCrud(currentCrudType);
+    if x.id === id); if(c) { document.getElementById('appt-client-name').value = c.name; document.getElementById('appt-client-phone').value = c.phone || ''; } }
+}(viewId === 'agenda') renderAgenda();
+    if(viewId === 'fiscal') {
+        render
+
+function saveAppointment(e) {
+    e.preventDefault();
+    const id = document.getElementById('apptIrrf();
+        const comp = appData.currentUser.company || {};
+        document.getElementById('link-emissor').href = comp.url_fiscal || DEFAULT_URL_FISCAL;
+        document.getElementById('-id').value;
+    const data = {
+        id: id || 'appt_' + Date.nowlink-das').href = comp.url_das || DEFAULT_URL_DAS;
+    }
+    if(),
+        title: document.getElementById('appt-title').value,
+        date: document.getElementById('appt(viewId === 'configuracoes') loadSettings();
+    if(viewId === 'rpa') load-date').value,
+        time: document.getElementById('appt-time').value,
+        client_name: document.getElementById('appt-client-name').value,
+        client_phone: document.getElementById('apptRPAOptions();
+}
+
+function loadSettings() {
+    const c = appData.currentUser.company || {};
+    document.getElementById('conf-company-name').value = c.name||''; 
+    -client-phone').value,
+        service_desc: document.getElementById('appt-desc').value,
+document.getElementById('conf-cnpj').value = c.cnpj||''; 
+    document.getElementById('conf        value: document.getElementById('appt-value').value || 0,
+        status: document.getElementById('-address').value = c.address||''; 
+    document.getElementById('conf-phone').value =appt-status').value,
+        pay_method: document.getElementById('appt-pay-method').value, c.phone||''; 
+    document.getElementById('conf-whatsapp').value = c.whatsapp||'
+        pay_status: document.getElementById('appt-pay-status').value,
+        obs: document.getElementById('appt-obs').value,
+        _updatedAt: Date.now() // Timestamp para sync
+    };
+';
+    document.getElementById('conf-url-fiscal').value = c.url_fiscal || DEFAULT_URL_FISCAL;
+    document.getElementById('conf-url-das').value = c.url_das ||    const list = getUserData().appointments;
+    if (id) { const idx = list.findIndex(x DEFAULT_URL_DAS;
+    document.getElementById('conf-reserve-rate').value = c.reserve_ => x.id === id); if(idx !== -1) list[idx] = data; } else {rate || 10;
+    document.getElementById('conf-prolabore-target').value = c. list.push(data); }
+    saveData(); closeModal('modal-appointment'); renderAgenda(); showToast('prolabore_target || 4000;
+    const adminDiv = document.getElementById('admin-Agendamento salvo!', 'success');
+}
+
+function editAppointment(id) { const appt = getUserDatatools');
+    if (appData.currentUser.email === 'jcnvap@gmail.com') { adminDiv.classList().appointments.find(a => a.id === id); if(appt) openAppointmentModal(appt); }.remove('hidden'); } else { adminDiv.classList.add('hidden'); }
+}
+
+function adminFill
+function deleteAppointment(id) { 
+    if(confirm('Excluir este agendamento?'))Data() {
+    if (appData.currentUser.email !== 'jcnvap@gmail.com') return { 
+        const list = getUserData().appointments; 
+        const idx = list.findIndex(a =>;
+    if (!confirm('ATENÇÃO: Isso preencherá o sistema com dados fictícios para teste. a.id === id); 
+        if(idx !== -1) {
+            list.splice(idx,  Continuar?')) return;
+    const today = new Date();
+    const formatDate = (date) => date.toISOString().1);
+            markAsDeleted(id); // Marca tombstone
+            saveData(); 
+            renderAgenda();split('T')[0];
+    const now = Date.now();
+
+    appData.currentUser.company = 
+        }
+    } 
+}
+
+function loadRPAOptions() {
+    const comp = app {
+        name: "Empresa Modelo Tech Ltda", cnpj: "12.345.678Data.currentUser.company || {};
+    document.getElementById('rpa-comp-name').value = comp.name || '';
+    document.getElementById('rpa-comp-cnpj').value = comp.cnpj || '';
+/0001-90", address: "Av. Paulista, 1000 - SP",
+    document.getElementById('rpa-comp-addr').value = comp.address || '';
+    if(!document        phone: "(11) 98765-4321", whatsapp: "(11.getElementById('rpa-prov-name').value) { document.getElementById('rpa-prov-name').) 98765-4321", role: "both",
+        url_fiscal: DEFAULT_URL_FISCAL, url_das: DEFAULT_URL_DAS, reserve_rate: 15value = appData.currentUser.name; }
+    const select = document.getElementById('rpa-provider-select');
+    select.innerHTML = '<option value="">Selecione um Autônomo...</option>';
+, prolabore_target: 5000
+    };
+    const rec = appData.records    const suppliers = getUserData().suppliers || [];
+    suppliers.forEach(s => select.innerHTML += `<option[appData.currentUser.id];
+    rec.clients = [
+        {id: 'c1', value="${s.id}">${s.name}</option>`);
+    document.getElementById('rpa-date'). name: 'Supermercado Silva', phone: '(11) 91111-111valueAsDate = new Date();
+    document.getElementById('rpa-id').value = '';
+}
+
+1', address: 'Rua A, 1', cnpj_cpf: '11.111.function fillRPAProvider() {
+    const id = document.getElementById('rpa-provider-select').value111/0001-11', contact_person: 'Sr. Silva', email: ';
+    const s = getUserData().suppliers.find(item => item.id === id);
+    ifsilva@email.com', updatedAt: now},
+        {id: 'c2', name: 'Pad (s) {
+        document.getElementById('rpa-prov-name').value = s.name;
+aria Central', phone: '(11) 92222-2222', address: '        document.getElementById('rpa-prov-cpf').value = s.cnpj_cpf || '';
+        documentRua B, 2', cnpj_cpf: '22.222.222/0.getElementById('rpa-prov-phone').value = s.phone || '';
+        document.getElementById('r001-22', contact_person: 'Maria', email: 'maria@email.com', updatedAtpa-prov-addr').value = s.address || '';
+    }
+}
+
+function calculateRPA(): now}
+    ];
+    rec.suppliers = [
+        {id: 's1', name: {
+    const value = parseFloat(document.getElementById('rpa-value').value) || 0;
+ 'Distribuidora Tech', phone: '(11) 81111-1111',    const issRate = parseFloat(document.getElementById('rpa-iss-rate').value) || 0; address: 'Av Ind, 100', cnpj_cpf: '66.666.6
+    const inss = value * 0.11;
+    document.getElementById('rpa-in66/0001-66', contact_person: 'Roberto', email: 'vendas@ss').value = `R$ ${inss.toFixed(2)}`;
+    const iss = value * (isstech.com', updatedAt: now}
+    ];
+    rec.products = [
+        {id: 'Rate / 100);
+    document.getElementById('rpa-iss-val').value = `Rp1', name: 'Mouse Sem Fio', price: 45.90, description: 'Mouse$ ${iss.toFixed(2)}`;
+    const irrfBase = value - inss;
+    let ir óptico', updatedAt: now},
+        {id: 'p2', name: 'Teclado Mecânico', price:rf = 0;
+    const table = appData.irrfTable.sort((a,b) => 150.00, description: 'Teclado RGB', updatedAt: now}
+    ];
+ a.max - b.max);
+    for(let row of table) { if (irrfBase <=    rec.services = [
+        {id: 'sv1', name: 'Formatação PC', price: row.max) { irrf = (irrfBase * (row.rate / 100)) - 120.00, description: 'Backup incluso', updatedAt: now}
+    ];
+    rec row.deduction; break; } }
+    if (irrf < 0) irrf = 0.transactions = [];
+    const catsIn = ['Venda', 'Serviço', 'Outros'];
+;
+    document.getElementById('rpa-irrf').value = `R$ ${irrf.toFixed(    const catsOut = ['Compra', 'Despesa', 'Imposto', 'Gastos Pessoais'];2)}`;
+    document.getElementById('rpa-net').value = `R$ ${(value - inss -
+    for(let i=0; i<10; i++) {
+        const isReceita = iss - irrf).toFixed(2)}`;
+}
+
+function saveRPA() {
+    const id = document Math.random() > 0.4;
+        rec.transactions.push({
+            id: 't.getElementById('rpa-id').value;
+    const rpa = {
+        id: id || '_admin_'+i, type: isReceita ? 'receita' : 'despesa',
+            category: isrpa_' + Date.now(),
+        date: document.getElementById('rpa-date').value,
+Receita ? catsIn[0] : catsOut[0],
+            value: 100, date: formatDate(        provider: document.getElementById('rpa-prov-name').value,
+        desc: document.getElementById('today), entity: 'Teste', obs: 'Gerado auto', updatedAt: now
+        });
+    }
+    rpa-desc').value,
+        value: document.getElementById('rpa-value').value,
+        rec.appointments = [
+        {id: 'apt1', title: 'Manutenção', date: formatDate(net: document.getElementById('rpa-net').value,
+        fullData: {
+            provName:today), time: '14:00', client_name: 'Escola Futuro', service_desc document.getElementById('rpa-prov-name').value,
+            provCpf: document.getElementById('r: 'Verificar lentidão', value: 300, status: 'agendado', pay_status: 'pendente', pay_method: 'pix', updatedAt: now}
+    ];
+    saveData();
+    showToast('Dados de teste gerados!', 'success');
+    location.reload(); 
+}
+
+function adminClearpa-prov-cpf').value,
+            provPhone: document.getElementById('rpa-prov-phone').value,
+            provAddr: document.getElementById('rpa-prov-addr').value,
+            inss: document.getElementById('rpa-inss').value,
+            iss: document.getElementById('rpa-Data() {
+    if (appData.currentUser.email !== 'jcnvap@gmail.com') returniss-val').value,
+            irrf: document.getElementById('rpa-irrf').value
+        },
+        _updatedAt: Date.now()
+    };
+    if(!getUserData().rpas);
+    if (!confirm('PERIGO: Limpar tudo?')) return;
+    appData.records[ getUserData().rpas = [];
+    const list = getUserData().rpas;
+    if(id)appData.currentUser.id] = { products: [], services: [], clients: [], suppliers: [], transactions: [], { const idx = list.findIndex(r => r.id === id); if(idx !== -1) list rpas: [], appointments: [], tombstones: [] };
+    saveData();
+    showToast('Sistema[idx] = rpa; else list.push(rpa); } else { list.push(rpa limpo.', 'info');
+    location.reload();
+}
+
+function saveCompanyData(e) {
+); }
+    saveData(); showToast('RPA Salvo!', 'success'); toggleRPAHistory();
+    e.preventDefault();
+    const companyData = {
+        name: document.getElementById('conf-company-}
+
+function toggleRPAHistory() {
+    const container = document.getElementById('rpa-history-containername').value,
+        cnpj: document.getElementById('conf-cnpj').value,
+        address: document.');
+    container.classList.toggle('hidden');
+    if(!container.classList.contains('hidden')) {getElementById('conf-address').value,
+        phone: document.getElementById('conf-phone').value,
+        
+        const tbody = document.querySelector('#rpa-history-table tbody');
+        tbody.innerHTML = '';
+        const list = getUserData().rpas || [];
+        list.sort((a,b) => new Date(b.date) - new Date(a.date));
+        list.forEach(r => { tbody.innerHTML += `<tr><td>${r.date}</td><td>${r.provider}</td><td>${r.net}</td><td><button class="action-btn btn-warning" onclick="loadRPA('${r.id}')whatsapp: document.getElementById('conf-whatsapp').value,
+        role: document.getElementById('conf-role').">✏️</button><button class="action-btn btn-danger" onclick="deleteRPA('${r.value,
+        url_fiscal: document.getElementById('conf-url-fiscal').value,
+        url_das: document.getElementById('conf-url-das').value,
+        reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
+        prolabore_target: parseFloat(document.getElementById('id}')">🗑️</button></td></tr>`; });
+    }
+}
+
+function loadRPA(idconf-prolabore-target').value)
+    };
+    appData.currentUser.company = companyData;
+    const idx = appData.users.findIndex(u=>u.id===appData.currentUser.id); 
+    appData.users[idx] = appData.currentUser; 
+
+    const supplierId) {
+    const r = getUserData().rpas.find(x => x.id === id);
+ = 'sup_own_' + appData.currentUser.id;
+    const supplierData = stampObject({
+    if(r) {
+        document.getElementById('rpa-id').value = r.id;         id: supplierId,
+        name: companyData.name + " (Minha Empresa)",
+        cnpj
+        document.getElementById('rpa-date').value = r.date;
+        document.getElementById('r_cpf: companyData.cnpj,
+        phone: companyData.phone,
+        address: companyData.address,
+        email: appData.currentUser.email,
+        contact_person: appData.currentUser.pa-desc').value = r.desc;
+        document.getElementById('rpa-value').value = r.value;
+        document.getElementById('rpa-prov-name').value = r.fullData.provname,
+        is_own_company: true
+    });
+    const suppliersList = getUserData().suppliersName;
+        document.getElementById('rpa-prov-cpf').value = r.fullData.provC;
+    const supIndex = suppliersList.findIndex(s => s.id === supplierId);
+    ifpf;
+        document.getElementById('rpa-prov-phone').value = r.fullData.provPhone(supIndex >= 0) { suppliersList[supIndex] = supplierData; } else { suppliersList.;
+        document.getElementById('rpa-prov-addr').value = r.fullData.provAddr;push(supplierData); }
+    saveData(); 
+    showToast('Dados salvos!', 'success');
+        calculateRPA(); showToast('RPA Carregado.', 'info'); window.scrollTo(0,
+}
+
+function updateDashboard() {
+    const t = getUserData().transactions; 
+    const currentMonth0);
+    }
+}
+
+function deleteRPA(id) { 
+    if(confirm('Ex = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    const reserveRate = appcluir este RPA?')) { 
+        const l = getUserData().rpas; 
+        l.Data.currentUser.company.reserve_rate || 10;
+    const prolaboreTarget = appDatasplice(l.findIndex(r => r.id === id), 1); 
+        markAsDeleted(.currentUser.company.prolabore_target || 4000;
+    let income = 0id);
+        saveData(); 
+        toggleRPAHistory(); 
+    } 
+}
+
+function prepareForExport(elementId) {
+    const element = document.getElementById(elementId);
+    const inputs; let expense = 0; let totalReserve = 0; let totalProlabore = 0;
+    t.forEach(x => {
+        const d = new Date(x.date);
+        const is = element.querySelectorAll('input, select, textarea');
+    inputs.forEach(input => {
+        if(CurrentMonth = d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+        if (x.type === 'receita') {
+            if (isCurrentMonth) {
+                income += x.valueinput.tagName === 'SELECT') {
+            const selected = input.options[input.selectedIndex];
+            input.;
+                const reserveAmount = x.value * (reserveRate / 100);
+                totalReservesetAttribute('data-export-value', selected ? selected.text : '');
+        } else {
+            input.setAttribute('value', input.value);
+        }
+    });
+    return element;
+}
+
+function export += reserveAmount;
+                const remainder = x.value - reserveAmount;
+                const needed = prolaboreRPAPdf() {
+    prepareForExport('rpa-content');
+    const element = document.getElementById('rpa-content');
+    const opt = { margin: 10, filename: 'RPA.pdf', imageTarget - totalProlabore;
+                if (needed > 0) totalProlabore += (remainder >=: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } };
+ needed) ? needed : remainder;
+            }
+        } else { if (isCurrentMonth) expense += x    html2pdf().set(opt).from(element).save();
+}
+
+function exportRPADoc().value; }
+    });
+    document.getElementById('dash-income').innerText = `R$ ${income.toFixed(2)}`;
+    document.getElementById('dash-expense').innerText = `R$ ${expense.toFixed {
+    prepareForExport('rpa-content');
+    // ... (Mantendo a mesma função de exportação DOC do original para economizar espaço aqui, lógica não alterada)
+    const company = document.getElementById('(2)}`;
+    document.getElementById('dash-balance').innerText = `R$ ${(income-expense).toFixed(2)}`;
+    document.getElementById('reserve-percent-display').innerText = reserveRate;
+    document.rpa-comp-name').value;
+    const cnpj = document.getElementById('rpa-comp-cnpjgetElementById('dash-reserve').innerText = `R$ ${totalReserve.toFixed(2)}`;
+    document.getElementById('dash-prolabore').innerText = `R$ ${totalProlabore.toFixed(2)}`;
+    document.getElementById('dash-prolabore-target').innerText = `Meta: R$ ${prolaboreTarget.toFixed(2)}`;
+}
+
+function renderAgenda(filter = '') {
+    if(!getUserData().appointments').value;
+    const provName = document.getElementById('rpa-prov-name').value;
+    const provCpf = document.getElementById('rpa-prov-cpf').value;
+    const desc = document) getUserData().appointments = [];
+    let list = getUserData().appointments.sort((a,b) =>.getElementById('rpa-desc').value;
+    const date = document.getElementById('rpa-date'). new Date(a.date+'T'+a.time) - new Date(b.date+'T'+b.time));
+    if (filter === 'today') {
+        const today = new Date().toISOString().splitvalue;
+    const value = document.getElementById('rpa-value').value;
+    const net = document('T')[0];
+        list = list.filter(a => a.date === today);
+    }.getElementById('rpa-net').value;
+    const htmlContent = `<html><body><h2>RPA</h2><p>Cont else if (!filter) {
+        const inputDate = document.getElementById('agenda-filter-date').value;ratante: ${company}</p><p>Prestador: ${provName}</p><p>Valor Líquido: ${
+        if(inputDate) list = list.filter(a => a.date === inputDate);
+    net}</p></body></html>`; 
+    const blob = new Blob([htmlContent], { type: 'application}
+    const container = document.getElementById('agenda-list');
+    container.innerHTML = '';
+    if/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document. (list.length === 0) { container.innerHTML = '<p class="text-center p-4"createElement('a'); a.href = url; a.download = 'RPA.doc'; a.click(); style="grid-column: 1/-1;">Nenhum agendamento encontrado.</p>'; return; }
+}
+
+function exportReportPDF() {
+    document.getElementById('report-company-header').innerText = app
+    const statusMap = { 'agendado': { label: 'Agendado', class: 'bgData.currentUser.company.name || "Minha Empresa";
+    document.getElementById('report-title').classList.remove('hidden');
+    const element = document.getElementById('report-print-area');
+    html2-scheduled', card: 'status-agendado' }, 'concluido': { label: 'Concluído', class: 'bg-done', card: 'status-concluido' }, 'cancelado': {pdf().from(element).save().then(() => document.getElementById('report-title').classList.add('hidden'));
+} label: 'Cancelado', class: 'bg-canceled', card: 'status-cancelado' } };
+
+
+function exportReportDoc() {
+    const table = document.getElementById('listing-table').outerHTML;
+    list.forEach(a => {
+        const st = statusMap[a.status] || statusMap['    const blob = new Blob([`<html><body>${table}</body></html>`], { type: 'application/msword' });
+agendado'];
+        const formattedDate = a.date.split('-').reverse().join('/');
+        const    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url card = document.createElement('div');
+        card.className = `stat-card agenda-card ${st.; a.download = `Relatorio.doc`; a.click();
+}
+
+function renderCrud(type)card}`;
+        card.innerHTML = `
+            <div class="flex justify-between items-start mb- { 
+    currentCrudType = type; 
+    document.getElementById('crud-title').innerText = type2"><span class="badge ${st.class}">${st.label}</span><div class="text-sm font.toUpperCase(); 
+    document.querySelectorAll('.crud-btn').forEach(btn => { btn.classList.toggle-bold text-light">${formattedDate} - ${a.time}</div></div>
+            <h3 class="('active', btn.getAttribute('onclick').includes(`'${type}'`)); });
+    const list = getUsermb-1">${a.title}</h3>
+            <p class="text-sm mb-1"><strong>ClienteData()[type] || []; 
+    const table = document.getElementById('crud-table'); 
+    let:</strong> ${a.client_name}</p>
+            <p class="text-sm mb-2 text h = type.match(/products|services/) ? '<th>Nome</th><th>Desc</th><th>Preço</th>' :-light">${a.service_desc || 'Sem descrição'}</p>
+            <div class="flex justify '<th>Nome</th><th>Contato</th><th>Info</th>'; 
+    table.innerHTML = `<thead><tr>${h}-between items-center mt-2 border-t pt-2">
+                <div class="text-sm<th>Ações</th></tr></thead><tbody>` + list.map(i => `<tr><td>${i.name}</td>"><span class="${a.pay_status === 'pago' ? 'text-success font-bold' :<td>${i.description || i.contact_person || '-'}</td><td>${i.price ? 'R$ 'text-warning'}">${a.pay_status === 'pago' ? '💲 Pago' : '⏳ '+i.price : i.phone}</td><td><button class="action-btn btn-warning" onclick=" Pendente'}</span> - R$ ${parseFloat(a.value).toFixed(2)}</div>
+                <div><buttoneditCrudItem('${i.id}')">✏️</button> <button class="action-btn btn-danger class="action-btn btn-warning" onclick="editAppointment('${a.id}')">✏️</button><" onclick="deleteCrudItem('${type}','${i.id}')">🗑️</button></td></tr>`).button class="action-btn btn-danger" onclick="deleteAppointment('${a.id}')">🗑️</buttonjoin('') + `</tbody>`; 
+}
+
+function openCrudModal(isEdit = false, itemData = null></div>
+            </div>`;
+        container.appendChild(card);
+    });
+}
+
+function openAppointmentModal) { document.getElementById('modal-crud').classList.remove('hidden'); document.getElementById('crud-id').(appt = null) {
+    document.getElementById('form-appointment').reset();
+    const clientSelect =value = itemData ? itemData.id : ''; const fields = document.getElementById('crud-fields'); if( document.getElementById('appt-client-select');
+    clientSelect.innerHTML = '<option value="">Selecionar ClientecurrentCrudType.match(/products|services/)) { fields.innerHTML = `<label>Nome</label><input Cadastrado...</option>';
+    getUserData().clients.forEach(c => { clientSelect.innerHTML += `< name="name" value="${itemData?.name||''}" required><label>Preço</label><input typeoption value="${c.id}">${c.name}</option>`; });
+    if (appt) {
+        document="number" step="0.01" name="price" value="${itemData?.price||''}" required.getElementById('appt-id').value = appt.id;
+        document.getElementById('appt-title').><label>Descrição</label><textarea name="description" rows="3">${itemData?.description||''}</textareavalue = appt.title;
+        document.getElementById('appt-date').value = appt.date;
+        document.getElementById('appt-time').value = appt.time;
+        document.getElementById('appt>`; } else { fields.innerHTML = `<label>Nome/Razão</label><input name="name" value="${itemData?.name||''}" required><label>Contato</label><input name="contact_person" value-client-name').value = appt.client_name;
+        document.getElementById('appt-client-="${itemData?.contact_person||''}"><label>CPF/CNPJ</label><input name="cnpj_phone').value = appt.client_phone;
+        document.getElementById('appt-desc').value = appcpf" value="${itemData?.cnpj_cpf||''}"><label>Endereço</label><input name="t.service_desc;
+        document.getElementById('appt-value').value = appt.value;
+address" value="${itemData?.address||''}"><label>Telefone</label><input name="phone" value        document.getElementById('appt-status').value = appt.status;
+        document.getElementById('appt-="${itemData?.phone||''}"><label>Email</label><input name="email" value="${itemData?.pay-method').value = appt.pay_method;
+        document.getElementById('appt-pay-statusemail||''}">`; } }
+function editCrudItem(id) { const item = getUserData()[currentCrud').value = appt.pay_status;
+        document.getElementById('appt-obs').value = apptType].find(i => i.id === id); if (item) openCrudModal(true, item);.obs;
+    } else {
+        document.getElementById('appt-id').value = '';
+        document }
+function saveCrudItem(e) { 
+    e.preventDefault(); 
+    const id = document.getElementById.getElementById('appt-date').valueAsDate = new Date();
+        document.getElementById('appt-status').('crud-id').value; 
+    const t = e.target; 
+    const item = {value = 'agendado';
+    }
+    document.getElementById('modal-appointment').classList.remove(' 
+        id: id || 'i_'+Date.now(), 
+        name: t.name.valuehidden');
+}
+
+function fillAppointmentClient() {
+    const id = document.getElementById('appt-client-, 
+        price: t.price?.value, 
+        description: t.description?.value, select').value;
+    if(id) { const c = getUserData().clients.find(x => x
+        contact_person: t.contact_person?.value, 
+        phone: t.phone?.value.id === id); if(c) { document.getElementById('appt-client-name').value = c.name; document.getElementById('appt-client-phone').value = c.phone || ''; } }
 }
 
 function saveAppointment(e) {
     e.preventDefault();
-    const id = document.getElementById('appt-id').value;
+    const id = document.getElementById('appt-, 
+        address: t.address?.value, 
+        cnpj_cpf: t.cnpj_cpf?.value, 
+        email: t.email?.value,
+        _updatedAt: Date.now()
+id').value;
     const data = stampObject({
-        id: id || 'appt_' + Date.now(),
+        id: id || 'appt_' + Date.    }; 
+    const list = getUserData()[currentCrudType]; 
+    const idx = list.findIndex(i => i.id === id); 
+    idx !== -1 ? list[idx] = item :now(),
         title: document.getElementById('appt-title').value,
         date: document.getElementById('appt-date').value,
         time: document.getElementById('appt-time').value,
-        client_name: document.getElementById('appt-client-name').value,
-        client_phone: document.getElementById('appt-client-phone').value,
-        service_desc: document.getElementById('appt-desc').value,
+        client_ list.push(item); 
+    saveData(); closeModal('modal-crud'); renderCrud(currentCrudType);name: document.getElementById('appt-client-name').value,
+        client_phone: document.getElementById(' showToast('Item salvo.', 'success'); 
+}
+function deleteCrudItem(t,id){ 
+appt-client-phone').value,
+        service_desc: document.getElementById('appt-desc').value,    if(confirm('Apagar?')){
+        const l=getUserData()[t]; 
+        l.
         value: document.getElementById('appt-value').value || 0,
-        status: document.getElementById('appt-status').value,
-        pay_method: document.getElementById('appt-pay-method').value,
+        status: document.getElementByIdsplice(l.findIndex(x=>x.id===id),1); 
+        markAsDeleted(id('appt-status').value,
+        pay_method: document.getElementById('appt-pay-method').value);
+        saveData(); 
+        renderCrud(t);
+    } 
+}
+function getUserData() { return,
         pay_status: document.getElementById('appt-pay-status').value,
-        obs: document.getElementById('appt-obs').value
+        obs: document appData.records[appData.currentUser.id]; }
+function closeModal(id) { document.getElementById(.getElementById('appt-obs').value
     });
-    
     const list = getUserData().appointments;
-    if (id) { const idx = list.findIndex(x => x.id === id); if(idx !== -1) list[idx] = data; } else { list.push(data); }
-    
-    saveData(); closeModal('modal-appointment'); renderAgenda(); showToast('Agendamento salvo!', 'success');
+    ifid).classList.add('hidden'); }
+function checkLicense() { const d = Math.ceil((appData (id) { const idx = list.findIndex(x => x.id === id); if(idx !== -.currentUser.licenseExpire - Date.now())/86400000); document.getElementById('1) list[idx] = data; } else { list.push(data); }
+    saveData();license-days-display').innerText = d>0?d+' dias':'Expirado'; document.getElementById('license-warning').classList.toggle('hidden', d>0); }
+function generateLicenseCode() { document. closeModal('modal-appointment'); renderAgenda();
+    showToast('Agendamento salvo!', 'success');
 }
 
-function editAppointment(id) { const appt = getUserData().appointments.find(a => a.id === id); if(appt) openAppointmentModal(appt); }
+function editAppointment(id) { const appt = getUserData().appointments.find(a => a.idgetElementById('license-random-code').value = Math.floor(Math.random()*900)+10 === id); if(appt) openAppointmentModal(appt); }
 function deleteAppointment(id) { 
-    if(confirm('Excluir?')) { 
-        registerDeletion(id);
-        const list = getUserData().appointments; const idx = list.findIndex(a => a.id === id); 
-        if(idx !== -1) list.splice(idx, 1); 
+0; }
+function sendWhatsApp() { window.open(`https://wa.me/55349    if(confirm('Excluir este agendamento?')) { 
+        registerDeletion(id); //97824990?text=Cod:${document.getElementById('license-random-code').value Marca exclusão para sync
+        const list = getUserData().appointments; 
+        const idx = list.findIndex}`); }
+function validateLicense() { 
+    const k = parseInt(document.getElementById('license-key-(a => a.id === id); 
+        if(idx !== -1) list.splice(idxinput').value);
+    const c = parseInt(document.getElementById('license-random-code').value);
+, 1); 
         saveData(); renderAgenda(); 
+        showToast('Agendamento excluído    const d = parseInt(document.getElementById('license-days-input').value); 
+    if(k.', 'info');
     } 
 }
 
-// Financeiro
-function renderTransactions(){ 
-    let l = (getUserData().transactions || []).sort((a,b)=>new Date(b.date)-new Date(a.date)); 
-    if (currentFinanceFilter !== 'all') { l = l.filter(t => t.type === currentFinanceFilter); }
-    document.querySelector('#finance-table tbody').innerHTML = l.length > 0 ? 
-        l.map(t=>`<tr><td>${t.date}</td><td>${t.type}</td><td>${t.category}</td><td>${t.obs||'-'}</td><td>R$ ${t.value}</td><td><button onclick="editTransaction('${t.id}')">✏️</button><button onclick="deleteTransaction('${t.id}')">🗑️</button></td></tr>`).join('') :
-        '<tr><td colspan="6" class="text-center p-4">Nenhuma movimentação encontrada.</td></tr>';
+function loadRPAOptions() {
+    const comp = app === (c + LIC_PAD_VAL) * LIC_MULT_FACTOR + LIC_YEAR_BASE + d){
+        appData.currentUser.licenseExpire += d * 86400000;
+        saveData.currentUser.company || {};
+    document.getElementById('rpa-comp-name').value = comp.name || '';
+    document.getElementById('rpa-comp-cnpj').value = comp.cnpj || '';
+Data();
+        checkLicense();
+        showToast('Licença validada!', 'success');
+    } else    document.getElementById('rpa-comp-addr').value = comp.address || '';
+    if(!document.getElementById('rpa-prov-name').value) { document.getElementById('rpa-prov-name').value = appData.currentUser.name; }
+    const select = document.getElementById('rpa-provider-select');
+    select.innerHTML = '<option value="">Selecione um Autônomo...</option>';
+    const suppliers = getUserData().suppliers || [];
+    suppliers.forEach(s => select.innerHTML += `<option {
+        showToast('Código inválido.', 'error');
+    }
 }
 
-function editTransaction(id){ 
-    const t=getUserData().transactions.find(x=>x.id===id); 
-    document.getElementById('trans-id').value=t.id; 
-    document.getElementById('trans-type').value=t.type; 
-    updateTransactionDependencies(); 
-    document.getElementById('trans-category').value=t.category; 
-    document.getElementById('trans-entity').value=t.entity; 
-    document.getElementById('trans-value').value=t.value; 
-    document.getElementById('trans-date').value=t.date; 
-    document.getElementById('trans-obs').value=t.obs; 
-    document.getElementById('modal-transaction').classList.remove('hidden'); 
-}
-
-function saveTransaction(e){ 
-    e.preventDefault(); 
-    const id=document.getElementById('trans-id').value; 
-    const t = stampObject({
-        id: id||'t_'+Date.now(), type:document.getElementById('trans-type').value, 
-        category:document.getElementById('trans-category').value, value:parseFloat(document.getElementById('trans-value').value), 
-        date:document.getElementById('trans-date').value, obs:document.getElementById('trans-obs').value, 
-        entity:document.getElementById('trans-entity').value
-    }); 
-    const l=getUserData().transactions; const i=l.findIndex(x=>x.id===t.id); i!==-1?l[i]=t:l.push(t); 
-    saveData(); closeModal('modal-transaction'); renderTransactions(); showToast('Transação salva.', 'success'); 
-}
-
-function deleteTransaction(id){ 
-    if(confirm('Apagar?')){
-        registerDeletion(id);
-        const l=getUserData().transactions; l.splice(l.findIndex(x=>x.id===id),1); 
-        saveData(); renderTransactions();
-    } 
-}
-
-function updateTransactionDependencies(){
-    const type = document.getElementById('trans-type').value;
-    const cats = type==='receita'?['Venda','Serviço','Outros']:['Compra','Despesa','Imposto', 'Gastos Pessoais']; 
-    document.getElementById('trans-category').innerHTML=cats.map(c=>`<option>${c}</option>`).join('');
-    const select = document.getElementById('trans-entity');
-    const list = type === 'receita' ? getUserData().clients : getUserData().suppliers;
-    if (list && list.length > 0) { select.innerHTML = '<option value="">Selecione...</option>' + list.map(i => `<option value="${i.name}">${i.name}</option>`).join(''); } else { select.innerHTML = '<option value="">Sem cadastros disponíveis</option>'; }
-}
-
-function openTransactionModal(){ 
-    document.getElementById('form-transaction').reset(); 
-    document.getElementById('trans-id').value=''; 
-    document.getElementById('modal-transaction').classList.remove('hidden'); 
-    updateTransactionDependencies(); 
-}
-
-function filterFinance(filter) {
+function filterFinance(filter value="${s.id}">${s.name}</option>`);
+    document.getElementById('rpa-date').) {
     currentFinanceFilter = filter;
     document.querySelectorAll('.fin-filter-btn').forEach(btn => { btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${filter}'`)); });
     renderTransactions();
 }
 
-// Cadastros (CRUD)
-function renderCrud(type) { 
-    currentCrudType = type; 
-    document.getElementById('crud-title').innerText = type.toUpperCase(); 
-    document.querySelectorAll('.crud-btn').forEach(btn => { btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${type}'`)); });
-    const list = getUserData()[type] || []; 
-    const table = document.getElementById('crud-table'); 
-    let h = type.match(/products|services/) ? '<th>Nome</th><th>Desc</th><th>Preço</th>' : '<th>Nome</th><th>Contato</th><th>Info</th>'; 
-    table.innerHTML = `<thead><tr>${h}<th>Ações</th></tr></thead><tbody>` + list.map(i => `<tr><td>${i.name}</td><td>${i.description || i.contact_person || '-'}</td><td>${i.price ? 'R$ '+i.price : i.phone}</td><td><button class="action-btn btn-warning" onclick="editCrudItem('${i.id}')">✏️</button> <button class="action-btn btn-danger" onclick="deleteCrudItem('${type}','${i.id}')">🗑️</button></td></tr>`).join('') + `</tbody>`; 
-}
-
-function openCrudModal(isEdit = false, itemData = null) { document.getElementById('modal-crud').classList.remove('hidden'); document.getElementById('crud-id').value = itemData ? itemData.id : ''; const fields = document.getElementById('crud-fields'); if(currentCrudType.match(/products|services/)) { fields.innerHTML = `<label>Nome</label><input name="name" value="${itemData?.name||''}" required><label>Preço</label><input type="number" step="0.01" name="price" value="${itemData?.price||''}" required><label>Descrição</label><textarea name="description" rows="3">${itemData?.description||''}</textarea>`; } else { fields.innerHTML = `<label>Nome/Razão</label><input name="name" value="${itemData?.name||''}" required><label>Contato</label><input name="contact_person" value="${itemData?.contact_person||''}"><label>CPF/CNPJ</label><input name="cnpj_cpf" value="${itemData?.cnpj_cpf||''}"><label>Endereço</label><input name="address" value="${itemData?.address||''}"><label>Telefone</label><input name="phone" value="${itemData?.phone||''}"><label>Email</label><input name="email" value="${itemData?.email||''}">`; } }
-function editCrudItem(id) { const item = getUserData()[currentCrudType].find(i => i.id === id); if (item) openCrudModal(true, item); }
-function saveCrudItem(e) { 
-    e.preventDefault(); 
-    const id = document.getElementById('crud-id').value; const t = e.target; 
-    const item = stampObject({ id: id || 'i_'+Date.now(), name: t.name.value, price: t.price?.value, description: t.description?.value, contact_person: t.contact_person?.value, phone: t.phone?.value, address: t.address?.value, cnpj_cpf: t.cnpj_cpf?.value, email: t.email?.value }); 
-    const list = getUserData()[currentCrudType]; const idx = list.findIndex(i => i.id === id); idx !== -1 ? list[idx] = item : list.push(item); 
-    saveData(); closeModal('modal-crud'); renderCrud(currentCrudType); showToast('Item salvo.', 'success'); 
-}
-function deleteCrudItem(t,id){ 
-    if(confirm('Apagar?')){
-        registerDeletion(id);
-        const l=getUserData()[t]; l.splice(l.findIndex(x=>x.id===id),1); 
-        saveData(); renderCrud(t);
-    } 
-}
-
-// RPA
-function loadRPAOptions() {
-    const comp = appData.currentUser.company || {};
-    document.getElementById('rpa-comp-name').value = comp.name || '';
-    document.getElementById('rpa-comp-cnpj').value = comp.cnpj || '';
-    document.getElementById('rpa-comp-addr').value = comp.address || '';
-    if(!document.getElementById('rpa-prov-name').value) { document.getElementById('rpa-prov-name').value = appData.currentUser.name; }
-    const select = document.getElementById('rpa-provider-select');
-    select.innerHTML = '<option value="">Selecione um Autônomo...</option>';
-    const suppliers = getUserData().suppliers || [];
-    suppliers.forEach(s => select.innerHTML += `<option value="${s.id}">${s.name}</option>`);
-    document.getElementById('rpa-date').valueAsDate = new Date();
+function renderTransactions(){ 
+    let l = (getUserData().transactions || []).sort((a,b)=>new Date(b.date)-new Date(a.date)); 
+    if (currentFinanceFilter !== 'all') { l = l.filter(t => t.type === currentFinanceFilter); }
+    document.querySelector('#finance-table tbody').innerHTML = l.length > 0 ? 
+        l.map(t=>`<tr><td>${t.date}</td><td>${t.type}</td><td>${t.category}</td><td>${t.obs||'-'}</td><td>R$ ${t.value}</td><td><button onclick="editTransaction('${t.id}')">✏️</button><button onclickvalueAsDate = new Date();
     document.getElementById('rpa-id').value = '';
 }
 
@@ -773,47 +1434,113 @@ function fillRPAProvider() {
         document.getElementById('rpa-prov-name').value = s.name;
         document.getElementById('rpa-prov-cpf').value = s.cnpj_cpf || '';
         document.getElementById('rpa-prov-phone').value = s.phone || '';
-        document.getElementById('rpa-prov-addr').value = s.address || '';
+        document.getElementById('r="deleteTransaction('${t.id}')">🗑️</button></td></tr>`).join('') :
+        '<tr><td colspan="6" class="text-center p-4">Nenhuma movimentação encontrada.</td></tr>';pa-prov-addr').value = s.address || '';
     }
 }
 
-function calculateRPA() {
+function calculateRPA()
+}
+
+function editTransaction(id){ 
+    const t=getUserData().transactions.find(x=> {
     const value = parseFloat(document.getElementById('rpa-value').value) || 0;
-    const issRate = parseFloat(document.getElementById('rpa-iss-rate').value) || 0;
+x.id===id); 
+    document.getElementById('trans-id').value=t.id;     const issRate = parseFloat(document.getElementById('rpa-iss-rate').value) || 0;
+    document.getElementById('trans-type').value=t.type; 
+    updateTransactionDependencies(); 
     const inss = value * 0.11;
-    document.getElementById('rpa-inss').value = `R$ ${inss.toFixed(2)}`;
-    const iss = value * (issRate / 100);
-    document.getElementById('rpa-iss-val').value = `R$ ${iss.toFixed(2)}`;
+    document.getElementById('rpa-in
+    document.getElementById('trans-category').value=t.category; 
+    document.getElementById('transss').value = `R$ ${inss.toFixed(2)}`;
+    const iss = value * (iss-entity').value=t.entity; 
+    document.getElementById('trans-value').value=t.Rate / 100);
+    document.getElementById('rpa-iss-val').value = `Rvalue; 
+    document.getElementById('trans-date').value=t.date; 
+    document.$ ${iss.toFixed(2)}`;
     const irrfBase = value - inss;
-    let irrf = 0;
-    const table = appData.irrfTable.sort((a,b) => a.max - b.max);
-    for(let row of table) { if (irrfBase <= row.max) { irrf = (irrfBase * (row.rate / 100)) - row.deduction; break; } }
-    if (irrf < 0) irrf = 0;
-    document.getElementById('rpa-irrf').value = `R$ ${irrf.toFixed(2)}`;
-    document.getElementById('rpa-net').value = `R$ ${(value - inss - iss - irrf).toFixed(2)}`;
+    let irgetElementById('trans-obs').value=t.obs; 
+    document.getElementById('modal-transaction').classListrf = 0;
+    const table = appData.irrfTable.sort((a,b) =>.remove('hidden'); 
+}
+
+function saveTransaction(e){ 
+    e.preventDefault(); 
+ a.max - b.max);
+    for(let row of table) { if (irrfBase <=    const id=document.getElementById('trans-id').value; 
+    const t={
+        id: row.max) { irrf = (irrfBase * (row.rate / 100)) -id||'t_'+Date.now(), 
+        type:document.getElementById('trans-type').value, row.deduction; break; } }
+    if (irrf < 0) irrf = 0 
+        category:document.getElementById('trans-category').value, 
+        value:parseFloat(document.;
+    document.getElementById('rpa-irrf').value = `R$ ${irrf.toFixed(getElementById('trans-value').value), 
+        date:document.getElementById('trans-date').value, 2)}`;
+    document.getElementById('rpa-net').value = `R$ ${(value - inss -
+        obs:document.getElementById('trans-obs').value, 
+        entity:document.getElementById('trans iss - irrf).toFixed(2)}`;
 }
 
 function saveRPA() {
-    const id = document.getElementById('rpa-id').value;
+    const id = document-entity').value,
+        _updatedAt: Date.now()
+    }; 
+    const l=.getElementById('rpa-id').value;
     const rpa = stampObject({
-        id: id || 'rpa_' + Date.now(),
-        date: document.getElementById('rpa-date').value,
+        id: idgetUserData().transactions; 
+    const i=l.findIndex(x=>x.id===t.id || 'rpa_' + Date.now(),
+        date: document.getElementById('rpa-date').value); 
+    i!==-1?l[i]=t:l.push(t); 
+    ,
         provider: document.getElementById('rpa-prov-name').value,
-        desc: document.getElementById('rpa-desc').value,
-        value: document.getElementById('rpa-value').value,
+        desc: document.saveData(); closeModal('modal-transaction'); renderTransactions(); showToast('Transação salva.', 'success'); 
+getElementById('rpa-desc').value,
+        value: document.getElementById('rpa-value').value,}
+
+function deleteTransaction(id){ 
+    if(confirm('Apagar?')){
+        const l=getUserData
         net: document.getElementById('rpa-net').value,
         fullData: {
-            provName: document.getElementById('rpa-prov-name').value,
-            provCpf: document.getElementById('rpa-prov-cpf').value,
-            provPhone: document.getElementById('rpa-prov-phone').value,
+            prov().transactions; 
+        l.splice(l.findIndex(x=>x.id===id),1);Name: document.getElementById('rpa-prov-name').value,
+            provCpf: document.getElementById 
+        markAsDeleted(id);
+        saveData(); 
+        renderTransactions();
+    } ('rpa-prov-cpf').value,
+            provPhone: document.getElementById('rpa-prov-
+}
+
+function updateTransactionDependencies(){
+    const type = document.getElementById('trans-type').value;
+    const cats = type==='receita'?['Venda','Serviço','Outros']:['Compra','phone').value,
             provAddr: document.getElementById('rpa-prov-addr').value,
-            inss: document.getElementById('rpa-inss').value,
+            Despesa','Imposto', 'Gastos Pessoais']; 
+    document.getElementById('trans-categoryinss: document.getElementById('rpa-inss').value,
             iss: document.getElementById('rpa-iss-val').value,
-            irrf: document.getElementById('rpa-irrf').value
+            irrf: document.getElementById('rpa-irrf').value').innerHTML=cats.map(c=>`<option>${c}</option>`).join('');
+    const select =
         }
     });
-    const list = getUserData().rpas;
-    if(id) { const idx = list.findIndex(r => r.id === id); if(idx !== -1) list[idx] = rpa; else list.push(rpa); } else { list.push(rpa); }
+    if(!getUserData().rpas) getUserData().rpas = [];
+ document.getElementById('trans-entity');
+    const list = type === 'receita' ? getUserData().clients    const list = getUserData().rpas;
+    if(id) { const idx = list.findIndex( : getUserData().suppliers;
+    if (list && list.length > 0) { select.innerHTML =r => r.id === id); if(idx !== -1) list[idx] = rpa; else '<option value="">Selecione...</option>' + list.map(i => `<option value="${i.name}">${i.name}</option>`).join(''); } else { select.innerHTML = '<option value="">Sem cadastros disponíveis</option>'; }
+}
+
+function openTransactionModal(){ 
+    document.getElementById('form-transaction').reset(); 
+    document.getElementById('trans-id').value=''; 
+    document.getElementById('modal-transaction').classList.remove('hidden'); 
+    updateTransactionDependencies(); 
+}
+
+function switchListing(t){ 
+    currentListingType=t; 
+    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); if(b.getAttribute('onclick').includes(`'${t}'`)) b.classList.add('active'); });
+    document.getElementById('listing-thead').innerHTML=t list.push(rpa); } else { list.push(rpa); }
     saveData(); showToast('RPA Salvo!', 'success'); toggleRPAHistory();
 }
 
@@ -825,168 +1552,96 @@ function toggleRPAHistory() {
         tbody.innerHTML = '';
         const list = getUserData().rpas || [];
         list.sort((a,b) => new Date(b.date) - new Date(a.date));
-        list.forEach(r => { tbody.innerHTML += `<tr><td>${r.date}</td><td>${r.provider}</td><td>${r.net}</td><td><button class="action-btn btn-warning" onclick="loadRPA('${r.id}')">✏️</button><button class="action-btn btn-danger" onclick="deleteRPA('${r.id}')">🗑️</button></td></tr>`; });
+        list.forEach(r => { tbody.innerHTML += `<tr><td>${r.date}</td><td>${r.provider}</td><td>${r.net}</td><td><button class="action==='movimentacoes'?'<tr><th>Data</th><th>Tipo</th><th>Valor</th></tr>':'<tr><th>Nome</th><th>-btn btn-warning" onclick="loadRPA('${r.id}')">✏️</button><button classDetalhe</th><th>Valor/Tel</th></tr>'; const d=t==='movimentacoes'?getUserData().transactions="action-btn btn-danger" onclick="deleteRPA('${r.id}')">🗑️</button>:getUserData()[t]; document.getElementById('listing-tbody').innerHTML=(d||[]).map(i=></td></tr>`; });
     }
 }
 
 function loadRPA(id) {
-    const r = getUserData().rpas.find(x => x.id === id);
+    const r = getUsert==='movimentacoes'?`<tr><td>${i.date}</td><td>${i.type}</td><td>Data().rpas.find(x => x.id === id);
     if(r) {
-        document.getElementById('rpa-id').value = r.id; 
-        document.getElementById('rpa-date').value = r.date;
-        document.getElementById('rpa-desc').value = r.desc;
+        ${i.value}</td></tr>`:`<tr><td>${i.name}</td><td>${i.description||idocument.getElementById('rpa-id').value = r.id; 
+        document.getElementById('rpa.contact_person||'-'}</td><td>${i.price||i.phone||'-'}</td></tr>`).join-date').value = r.date;
+        document.getElementById('rpa-desc').value = r.(''); 
+}
+
+function loadFiscalReminders(){ document.getElementById('fiscal-reminders').innerHTML='<li>DASdesc;
         document.getElementById('rpa-value').value = r.value;
-        document.getElementById('rpa-prov-name').value = r.fullData.provName;
-        document.getElementById('rpa-prov-cpf').value = r.fullData.provCpf;
+        document.getElementById Dia 20</li>'; }
+function downloadBackup(){ saveData(); const a=document.createElement('a'); a('rpa-prov-name').value = r.fullData.provName;
+        document.getElementById('.href=URL.createObjectURL(new Blob([JSON.stringify(appData)],{type:'json'})); a.download='backup.json'; a.click(); }
+function restoreBackup(i){ const r=new FileReader(); r.onload=e=>{appData=JSON.parse(e.target.result);saveData();location.reload();}; r.readAsText(i.files[0]); }
+function renderIrrf(){ document.getElementByIdrpa-prov-cpf').value = r.fullData.provCpf;
         document.getElementById('rpa-prov-phone').value = r.fullData.provPhone;
         document.getElementById('rpa-prov-addr').value = r.fullData.provAddr;
-        calculateRPA(); showToast('RPA Carregado.', 'info'); window.scrollTo(0,0);
+        calculateRPA(); showToast('irrf-table-body').innerHTML=appData.irrfTable.map(r=>`<tr><td>('RPA Carregado.', 'info'); window.scrollTo(0,0);
     }
 }
 
 function deleteRPA(id) { 
-    if(confirm('Excluir?')) { 
+    if(confirm('Excluir este RPA?')) { ${r.max}</td><td>${r.rate}</td><td>${r.deduction}</td><td><button
         registerDeletion(id);
-        const l = getUserData().rpas; l.splice(l.findIndex(r => r.id === id), 1); 
-        saveData(); toggleRPAHistory(); 
+        const l = getUserData().rpas; 
+        l.splice class="action-btn btn-warning" onclick="editIrrfRow('${r.id}')">✏️</(l.findIndex(r => r.id === id), 1); 
+        saveData(); toggleRPAHistory();button><button class="action-btn btn-danger" onclick="deleteIrrfRow('${r.id}')"> 
     } 
 }
 
-// Configurações e Fiscal
-function loadSettings() {
-    const c = appData.currentUser.company || {};
-    document.getElementById('conf-company-name').value = c.name||''; 
-    document.getElementById('conf-cnpj').value = c.cnpj||''; 
-    document.getElementById('conf-address').value = c.address||''; 
-    document.getElementById('conf-phone').value = c.phone||''; 
-    document.getElementById('conf-whatsapp').value = c.whatsapp||'';
-    document.getElementById('conf-url-fiscal').value = c.url_fiscal || DEFAULT_URL_FISCAL;
-    document.getElementById('conf-url-das').value = c.url_das || DEFAULT_URL_DAS;
-    document.getElementById('conf-reserve-rate').value = c.reserve_rate || 10;
-    document.getElementById('conf-prolabore-target').value = c.prolabore_target || 4000;
-
-    const adminDiv = document.getElementById('admin-tools');
-    if (appData.currentUser.email === 'jcnvap@gmail.com') {
-        adminDiv.classList.remove('hidden');
-    } else {
-        adminDiv.classList.add('hidden');
-    }
-}
-
-function saveCompanyData(e) {
-    e.preventDefault();
-    const companyData = {
-        name: document.getElementById('conf-company-name').value,
-        cnpj: document.getElementById('conf-cnpj').value,
-        address: document.getElementById('conf-address').value,
-        phone: document.getElementById('conf-phone').value,
-        whatsapp: document.getElementById('conf-whatsapp').value,
-        role: document.getElementById('conf-role').value,
-        url_fiscal: document.getElementById('conf-url-fiscal').value,
-        url_das: document.getElementById('conf-url-das').value,
-        reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
-        prolabore_target: parseFloat(document.getElementById('conf-prolabore-target').value)
-    };
-    appData.currentUser.company = companyData;
-    saveData(); 
-    showToast('Configurações salvas!', 'success');
-}
-
-function loadFiscalReminders(){ document.getElementById('fiscal-reminders').innerHTML='<li>DAS Dia 20</li>'; }
-function renderIrrf(){ document.getElementById('irrf-table-body').innerHTML=appData.irrfTable.map(r=>`<tr><td>${r.max}</td><td>${r.rate}</td><td>${r.deduction}</td><td><button class="action-btn btn-warning" onclick="editIrrfRow('${r.id}')">✏️</button><button class="action-btn btn-danger" onclick="deleteIrrfRow('${r.id}')">X</button></td></tr>`).join(''); }
-function deleteIrrfRow(id){ appData.irrfTable.splice(appData.irrfTable.findIndex(r=>r.id===id),1); saveData(); renderIrrf(); }
-function openIrrfModal(){ document.getElementById('form-irrf').reset(); document.getElementById('irrf-id').value = ''; document.getElementById('modal-irrf').classList.remove('hidden'); }
-function editIrrfRow(id) { const row = appData.irrfTable.find(r => r.id === id); if(row) { document.getElementById('irrf-id').value = row.id; document.getElementById('irrf-max').value = row.max; document.getElementById('irrf-rate').value = row.rate; document.getElementById('irrf-deduction').value = row.deduction; document.getElementById('modal-irrf').classList.remove('hidden'); } }
-function saveIrrfRow(e){ e.preventDefault(); const id = document.getElementById('irrf-id').value; const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target[3].value) }; if (id) { const idx = appData.irrfTable.findIndex(r => r.id === id); if (idx !== -1) appData.irrfTable[idx] = data; } else { appData.irrfTable.push(data); } saveData(); closeModal('modal-irrf'); renderIrrf(); showToast('Tabela IRRF salva.', 'success'); }
-
-// Listagens e Exports
-function switchListing(t){ 
-    currentListingType=t; 
-    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); if(b.getAttribute('onclick').includes(`'${t}'`)) b.classList.add('active'); });
-    document.getElementById('listing-thead').innerHTML=t==='movimentacoes'?'<tr><th>Data</th><th>Tipo</th><th>Valor</th></tr>':'<tr><th>Nome</th><th>Detalhe</th><th>Valor/Tel</th></tr>'; const d=t==='movimentacoes'?getUserData().transactions:getUserData()[t]; document.getElementById('listing-tbody').innerHTML=(d||[]).map(i=>t==='movimentacoes'?`<tr><td>${i.date}</td><td>${i.type}</td><td>${i.value}</td></tr>`:`<tr><td>${i.name}</td><td>${i.description||i.contact_person||'-'}</td><td>${i.price||i.phone||'-'}</td></tr>`).join(''); 
-}
-
 function prepareForExport(elementId) {
-    const element = document.getElementById(elementId);
+    const element = document.X</button></td></tr>`).join(''); }
+function deleteIrrfRow(id){ appData.irrfgetElementById(elementId);
     const inputs = element.querySelectorAll('input, select, textarea');
-    inputs.forEach(input => {
+    inputs.Table.splice(appData.irrfTable.findIndex(r=>r.id===id),1); saveDataforEach(input => {
         if(input.tagName === 'SELECT') {
-            const selected = input.options[input.selectedIndex];
+            const selected = input.options[(); renderIrrf(); }
+function openIrrfModal(){ document.getElementById('form-irrf').reset();input.selectedIndex];
             input.setAttribute('data-export-value', selected ? selected.text : '');
-        } else {
+ document.getElementById('irrf-id').value = ''; document.getElementById('modal-irrf').classList.remove        } else {
             input.setAttribute('value', input.value);
         }
     });
-    return element;
+    ('hidden'); }
+function editIrrfRow(id) { const row = appData.irrfTable.return element;
 }
 
 function exportRPAPdf() {
-    prepareForExport('rpa-content');
+    prepareForExport('rpa-content');find(r => r.id === id); if(row) { document.getElementById('irrf-id').
     const element = document.getElementById('rpa-content');
-    const opt = { margin: 10, filename: 'RPA.pdf', image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } };
+    const opt = { margin: 10, filenamevalue = row.id; document.getElementById('irrf-max').value = row.max; document.getElementById: 'RPA.pdf', image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4',('irrf-rate').value = row.rate; document.getElementById('irrf-deduction').value = row.deduction; document.getElementById('modal-irrf').classList.remove('hidden'); } }
+function orientation: 'portrait' } };
     html2pdf().set(opt).from(element).save();
-}
+ saveIrrfRow(e){ e.preventDefault(); const id = document.getElementById('irrf-id').value}
 
 function exportRPADoc() {
     prepareForExport('rpa-content');
-    const company = document.getElementById('rpa-comp-name').value;
-    const net = document.getElementById('rpa-net').value;
-    const blob = new Blob([`<html><body><h2>RPA</h2><p>Empresa: ${company}</p><p>Líquido: ${net}</p></body></html>`], { type: 'application/msword' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'RPA.doc'; a.click();
+    const company; const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target = document.getElementById('rpa-comp-name').value;
+    const cnpj = document.getElementById('r[3].value) }; if (id) { const idx = appData.irrfTable.findIndex(rpa-comp-cnpj').value;
+    const provName = document.getElementById('rpa-prov-name').value;
+    const provCpf = document.getElementById('rpa-prov-cpf').value;
+ => r.id === id); if (idx !== -1) appData.irrfTable[idx] =    const desc = document.getElementById('rpa-desc').value;
+    const date = document.getElementById(' data; } else { appData.irrfTable.push(data); } saveData(); closeModal('modal-irrpa-date').value;
+    const value = document.getElementById('rpa-value').value;
+rf'); renderIrrf(); showToast('Tabela IRRF salva.', 'success'); }
+
+async function triggerManualSync() {
+    const btn = document.getElementById('btn-manual-sync');
+    const originalText =    const net = document.getElementById('rpa-net').value;
+    const htmlContent = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com btn.innerHTML;
+    if (!navigator.onLine) showToast("Você está Offline. Dados salvos apenas local:office:word' xmlns='http://www.w3.org/TR/REC-html40'><mente.", "info");
+    btn.innerHTML = '⏳ Sincronizando...';
+    btn.disabledhead><meta charset='utf-8'><title>RPA</title><style>body { font-family: = true;
+    try {
+        const result = await saveData(true);
+        // UI será atualizada no force 'Arial', sans-serif; font-size: 12pt; }h2 { text-align: center;Sync ou reload se necessário, mas o save já trata o merge interno
+        if(currentCrudType) renderCrud( text-decoration: underline; }p { margin: 5px 0; }hr { border: 0currentCrudType);
+        updateDashboard();
+        setTimeout(() => { btn.innerHTML = originalText; btn.disabled = false; border-top: 1px solid #ccc; margin: 20px 0; }.section { margin-; }, 1000);
+    } catch (e) {
+        showToast('Erro crítico aobottom: 20px; border: 1px solid #eee; padding: 10px; }. tentar sincronizar.', 'error');
+        console.error(e);
+        btn.innerHTML = originalText;label { font-weight: bold; }</style></head><body><h2>RECIBO DE PAGAMENTO A AUTÔ
+        btn.disabled = false;
+    }
 }
 
-function exportReportPDF() {
-    document.getElementById('report-company-header').innerText = appData.currentUser.company.name || "Minha Empresa";
-    document.getElementById('report-title').classList.remove('hidden');
-    const element = document.getElementById('report-print-area');
-    html2pdf().from(element).save().then(() => document.getElementById('report-title').classList.add('hidden'));
-}
-
-function exportReportDoc() {
-    const table = document.getElementById('listing-table').outerHTML;
-    const blob = new Blob([`<html><body>${table}</body></html>`], { type: 'application/msword' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `Relatorio.doc`; a.click();
-}
-
-// Licença e Admin
-function checkLicense() { const d = Math.ceil((appData.currentUser.licenseExpire - Date.now())/86400000); document.getElementById('license-days-display').innerText = d>0?d+' dias':'Expirado'; document.getElementById('license-warning').classList.toggle('hidden', d>0); }
-function generateLicenseCode() { document.getElementById('license-random-code').value = Math.floor(Math.random()*900)+100; }
-function sendWhatsApp() { window.open(`https://wa.me/5534997824990?text=Cod:${document.getElementById('license-random-code').value}`); }
-function validateLicense() { 
-    const k = parseInt(document.getElementById('license-key-input').value);
-    const c = parseInt(document.getElementById('license-random-code').value);
-    const d = parseInt(document.getElementById('license-days-input').value); 
-    if(k === (c + LIC_PAD_VAL) * LIC_MULT_FACTOR + LIC_YEAR_BASE + d){
-        appData.currentUser.licenseExpire += d * 86400000;
-        saveData(); checkLicense(); showToast('Licença validada!', 'success');
-    } else { showToast('Código inválido.', 'error'); }
-}
-
-function adminFillData() {
-    if (appData.currentUser.email !== 'jcnvap@gmail.com') return;
-    if (!confirm('ATENÇÃO: Dados fictícios. Continuar?')) return;
-    const ts = Date.now();
-    appData.records[appData.currentUser.id].clients = [{id: 'c1', name: 'Cliente Teste Sync', _updatedAt: ts}];
-    saveData();
-    showToast('Dados gerados!', 'success');
-    location.reload(); 
-}
-
-function adminClearData() {
-    if (appData.currentUser.email !== 'jcnvap@gmail.com') return;
-    if (!confirm('Limpar tudo?')) return;
-    appData.records[appData.currentUser.id] = createSeedData().records.placeholder_id;
-    appData.records[appData.currentUser.id].products = [];
-    saveData();
-    showToast('Resetado.', 'info');
-    location.reload();
-}
-
-function downloadBackup(){ saveData(); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(appData)],{type:'json'})); a.download='backup.json'; a.click(); }
-function restoreBackup(i){ const r=new FileReader(); r.onload=e=>{appData=JSON.parse(e.target.result);saveData();location.reload();}; r.readAsText(i.files[0]); }
-function triggerManualSync() { DataManager.forceSync(appData); }
-
-// INICIA O APP
 init();
+```NOMO (RPA)</h2><br><div class="section"><h3>1. Contratante</h3><p
