@@ -10,33 +10,44 @@ const LIC_YEAR_BASE = 1954;
 
 // Configuração Firebase (Adicione suas chaves aqui)
 const firebaseConfig = {
-  apiKey¡:: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo"‚,
-  authDomínio¡:: "projeto-bfed3.firebaseapp.com"‚,
-  projetoId¡:: "projeto-bfed3"‚,
-  armazenamentoBucket¡:: "projeto-bfed3.firebasestorage.app"‚,
-  mensagensSenderId¡:: "785289237066"‚,
-  AppId¡:: "1:785289237066:web:8206fe2e1073db72d5ccb3"
+  apiKey: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo",
+  authDomain: "projeto-bfed3.firebaseapp.com",
+  projectId: "projeto-bfed3",
+  storageBucket: "projeto-bfed3.firebasestorage.app",
+  messagingSenderId: "785289237066",
+  appId: "1:785289237066:web:8206fe2e1073db72d5ccb3"
 };
 
-// --- GESTOR DE DADOS HÍBRIDO (REGRA DE OPERAÇÃO CRUD) ---
+// --- FUNÇÃO AUXILIAR DE NOTIFICAÇÃO (NOVO) ---
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    
+    // Ícones baseados no tipo
+    let icon = '';
+    if(type === 'success') icon = '✅ ';
+    if(type === 'error') icon = '❌ ';
+    if(type === 'info') icon = 'ℹ️ ';
+
+    toast.innerText = icon + message;
+    container.appendChild(toast);
+
+    // Remove automaticamente após 4 segundos
+    setTimeout(() => {
+        toast.style.animation = 'fadeOut 0.5s ease-out forwards';
+        setTimeout(() => toast.remove(), 500);
+    }, 4000);
+}
+
+// --- GESTOR DE DADOS HÍBRIDO (ATUALIZADO PARA REPORTAR ERROS) ---
 const DataManager = {
     dbName: 'MEI_DB_HYBRID',
     storeName: 'mei_data',
-    isDirty: false, // Flag para indicar dados pendentes de sincronização
+    isDirty: false, 
     
-    // Helper de diagnóstico de erros
-    diagnoseError(e) {
-        let msg = "Erro desconhecido.";
-        if (!navigator.onLine) return "Sem conexão com a internet.";
-        if (e.code === 'permission-denied') msg = "Permissão negada. Verifique as regras do Firebase.";
-        else if (e.code === 'unavailable') msg = "Serviço indisponível temporariamente.";
-        else if (e.code === 'resource-exhausted') msg = "Cota do Firebase excedida.";
-        else if (e.message && e.message.includes("API key")) msg = "Chave API do Firebase inválida ou ausente.";
-        
-        console.error(`[SYNC DIAGNOSTIC] ${msg}`, e);
-        return msg;
-    },
-
     async initDB() {
         return new Promise((resolve, reject) => {
             const req = indexedDB.open(this.dbName, 1);
@@ -51,41 +62,69 @@ const DataManager = {
         });
     },
 
-    // A REGRA CENTRAL DE CRUD HÍBRIDO (CORRIGIDA & DIAGNOSTICADA)
-    async save(data) {
+    // A REGRA CENTRAL DE CRUD HÍBRIDO (MELHORADA)
+    async save(data, isManualSync = false) {
+        let saveStatus = { local: false, cloud: false, error: null };
+
         // 1. Persistência Local Obrigatória (IndexedDB)
         try {
             const db = await this.initDB();
             const tx = db.transaction(this.storeName, 'readwrite');
-            // Sanitiza os dados para evitar erros de clonagem em objetos complexos
+            // Sanitiza os dados
             const sanitizedData = JSON.parse(JSON.stringify(data));
             tx.objectStore(this.storeName).put(sanitizedData, 'main_data');
+            
             // Backup legado
             try { localStorage.setItem(DB_KEY, JSON.stringify(sanitizedData)); } catch(e) {}
-        } catch(e) { console.error("Erro Crítico ao Salvar Localmente", e); }
+            
+            saveStatus.local = true;
+        } catch(e) { 
+            console.error("Erro Crítico ao Salvar Localmente", e);
+            saveStatus.error = "Falha no salvamento local (Dispositivo).";
+            if (isManualSync) showToast("Erro Crítico: Não foi possível salvar no dispositivo!", "error");
+            return saveStatus;
+        }
 
         // 2. Tentativa de Sincronização em Nuvem (Firebase)
         if (navigator.onLine && firebaseConfig.apiKey && firebase.apps.length && data.currentUser) {
             try {
                 const dbCloud = firebase.firestore();
-                // Sanitização crítica para o Firestore (remove undefined e functions)
+                // Sanitização crítica para o Firestore
                 const payload = JSON.parse(JSON.stringify(data));
                 
                 await dbCloud.collection('users').doc(data.currentUser.id).set(payload);
+                
                 this.isDirty = false;
-                this.updateSyncStatus('online');
-                console.log("Dados Sincronizados com a Nuvem.");
+                this.updateSyncStatus(true);
+                saveStatus.cloud = true;
+
+                if (isManualSync) showToast("Sincronização com a nuvem concluída!", "success");
+
             } catch(e) { 
-                this.diagnoseError(e);
+                console.error("Falha no envio para Nuvem:", e); 
                 this.isDirty = true;
-                this.updateSyncStatus('error');
-                throw e; // Repassa erro para quem chamou (ex: manual sync)
+                this.updateSyncStatus(false);
+                
+                // Melhorando o reporte de erro
+                let errorMsg = "Erro desconhecido na nuvem.";
+                if (e.code === 'permission-denied') errorMsg = "Sem permissão. Verifique seu login.";
+                else if (e.code === 'unavailable') errorMsg = "Servidor indisponível ou sem internet.";
+                
+                saveStatus.error = errorMsg;
+                
+                // Notifica o usuário visualmente se for manual ou erro crítico
+                showToast(`Falha na Nuvem: ${errorMsg}`, "error");
             }
         } else {
             // Se offline ou sem config, marca como pendente
             this.isDirty = true;
-            this.updateSyncStatus('offline');
+            this.updateSyncStatus(false);
+            if(isManualSync && !navigator.onLine) {
+                showToast("Você está Offline. Dados salvos apenas localmente.", "info");
+            }
         }
+        
+        return saveStatus;
     },
 
     // Carregamento local
@@ -116,10 +155,12 @@ const DataManager = {
                 const doc = await dbCloud.collection('users').doc(userId).get();
                 if (doc.exists) {
                     console.log("Backup encontrado na nuvem.");
+                    showToast("Dados restaurados da nuvem.", "success");
                     return doc.data();
                 }
             } catch(e) { 
-                this.diagnoseError(e); 
+                console.error("Erro ao buscar backup na nuvem:", e); 
+                showToast("Erro ao buscar dados na nuvem.", "error");
             }
         }
         return null;
@@ -129,25 +170,27 @@ const DataManager = {
     async forceSync(currentData) {
         if (this.isDirty && currentData) {
             console.log("Reconectado! Tentando sincronizar pendências...");
+            showToast("Reconectado! Sincronizando...", "info");
             await this.save(currentData);
         } else {
-            this.updateSyncStatus('online');
+            this.updateSyncStatus(true);
         }
     },
 
-    updateSyncStatus(status) { // 'online', 'offline', 'error'
+    updateSyncStatus(isOnline) {
         const el = document.getElementById('sync-indicator');
+        const userNameDisplay = document.getElementById('user-name-display');
+        
         if(el) {
-            el.className = 'sync-status'; // Reset
-            if (status === 'online') {
-                el.classList.add('sync-online');
+            if (isOnline) {
+                el.className = 'sync-status sync-online';
                 el.title = 'Sincronizado (Nuvem)';
-            } else if (status === 'error') {
-                el.classList.add('sync-error');
-                el.title = 'Erro na Sincronização (Verifique Console)';
+                // Feedback visual sutil no nome
+                if(userNameDisplay) userNameDisplay.style.color = 'inherit';
             } else {
-                el.classList.add('sync-offline');
+                el.className = 'sync-status sync-offline';
                 el.title = 'Armazenamento Local (Pendente Envio)';
+                if(userNameDisplay) userNameDisplay.style.color = '#ca8a04'; // Amarelo warning
             }
         }
     }
@@ -158,7 +201,10 @@ if (firebaseConfig.apiKey) {
     try {
         firebase.initializeApp(firebaseConfig);
         console.log("Firebase Initialized");
-    } catch(e) { console.error("Firebase Init Error", e); }
+    } catch(e) { 
+        console.error("Firebase Init Error", e);
+        showToast("Erro ao inicializar serviços de Nuvem", "error");
+    }
 }
 
 let appData = { currentUser: null, users: [], records: {}, irrfTable: [] };
@@ -177,7 +223,10 @@ let currentFinanceFilter = 'all';
 
 async function init() {
     window.addEventListener('online', () => DataManager.forceSync(appData));
-    window.addEventListener('offline', () => DataManager.updateSyncStatus('offline'));
+    window.addEventListener('offline', () => {
+        DataManager.updateSyncStatus(false);
+        showToast("Conexão perdida. Modo Offline.", "info");
+    });
 
     const loadedData = await DataManager.load();
     if (loadedData) appData = loadedData;
@@ -194,8 +243,9 @@ async function init() {
 
 function showAuth() { document.getElementById('auth-screen').classList.remove('hidden'); document.getElementById('app-container').classList.add('hidden'); }
 
-async function saveData() { 
-    await DataManager.save(appData); 
+// Modificado para suportar o flag isManualSync
+async function saveData(isManual = false) { 
+    return await DataManager.save(appData, isManual); 
 }
 
 // CORREÇÃO: Sync Bidirecional no Login
@@ -203,6 +253,7 @@ async function loginUser(user) {
     const localUserRecord = appData.records[user.id];
     
     if (!localUserRecord && navigator.onLine) {
+        showToast("Buscando backup na nuvem...", "info");
         const cloudData = await DataManager.loadCloudData(user.id);
         if (cloudData) {
             appData = cloudData;
@@ -228,7 +279,7 @@ async function loginUser(user) {
     
     checkLicense(); navTo('dashboard'); loadFiscalReminders();
     
-    DataManager.updateSyncStatus(navigator.onLine ? 'online' : 'offline');
+    DataManager.updateSyncStatus(navigator.onLine);
     saveData(); 
 }
 
@@ -258,11 +309,12 @@ function handleGoogleLogin() {
                 company: { reserve_rate: 10, prolabore_target: 4000 }
             };
             appData.users.push(appUser);
+            // Inicializa records vazio
             appData.records[appUser.id] = createSeedData().records[appUser.id]; 
         }
         loginUser(appUser);
     }).catch((error) => {
-        alert("Erro no login Google: " + error.message);
+        showToast("Erro no login Google: " + error.message, "error");
     });
 }
 
@@ -289,7 +341,10 @@ function createSeedData() {
 document.getElementById('register-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const email = document.getElementById('reg-email').value;
-    if (appData.users.find(u => u.email === email)) return alert('E-mail já existe!');
+    if (appData.users.find(u => u.email === email)) {
+        showToast('E-mail já existe!', 'error');
+        return;
+    }
     
     const newUser = {
         id: 'u_' + Date.now(), name: document.getElementById('reg-name').value, email: email,
@@ -299,6 +354,7 @@ document.getElementById('register-form').addEventListener('submit', (e) => {
     };
     appData.users.push(newUser); 
     
+    // Seed Manual
     const seed = createSeedData().records.placeholder_id;
     appData.records[newUser.id] = seed;
     
@@ -308,7 +364,11 @@ document.getElementById('register-form').addEventListener('submit', (e) => {
 document.getElementById('login-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const user = appData.users.find(u => u.email === document.getElementById('login-email').value && u.password === document.getElementById('login-password').value);
-    user ? loginUser(user) : alert('Erro no login');
+    if (user) {
+        loginUser(user);
+    } else {
+        showToast('Credenciais inválidas. Verifique e-mail e senha.', 'error');
+    }
 });
 
 function navTo(viewId) {
@@ -429,7 +489,7 @@ function adminFillData() {
     ];
 
     saveData();
-    alert('Dados de teste gerados com sucesso! O painel foi atualizado.');
+    showToast('Dados de teste gerados com sucesso!', 'success');
     location.reload(); 
 }
 
@@ -448,7 +508,7 @@ function adminClearData() {
     };
 
     saveData();
-    alert('Sistema limpo com sucesso.');
+    showToast('Sistema limpo com sucesso.', 'info');
     location.reload();
 }
 
@@ -484,7 +544,8 @@ function saveCompanyData(e) {
     const suppliersList = getUserData().suppliers;
     const supIndex = suppliersList.findIndex(s => s.id === supplierId);
     if(supIndex >= 0) { suppliersList[supIndex] = supplierData; } else { suppliersList.push(supplierData); }
-    saveData(); alert('Dados salvos e cadastro de fornecedor atualizado!');
+    saveData(); 
+    showToast('Dados salvos e fornecedor atualizado!', 'success');
 }
 
 function updateDashboard() {
@@ -600,6 +661,7 @@ function saveAppointment(e) {
     const list = getUserData().appointments;
     if (id) { const idx = list.findIndex(x => x.id === id); if(idx !== -1) list[idx] = data; } else { list.push(data); }
     saveData(); closeModal('modal-appointment'); renderAgenda();
+    showToast('Agendamento salvo!', 'success');
 }
 
 function editAppointment(id) { const appt = getUserData().appointments.find(a => a.id === id); if(appt) openAppointmentModal(appt); }
@@ -668,7 +730,7 @@ function saveRPA() {
     if(!getUserData().rpas) getUserData().rpas = [];
     const list = getUserData().rpas;
     if(id) { const idx = list.findIndex(r => r.id === id); if(idx !== -1) list[idx] = rpa; else list.push(rpa); } else { list.push(rpa); }
-    saveData(); alert('RPA Salvo!'); toggleRPAHistory();
+    saveData(); showToast('RPA Salvo!', 'success'); toggleRPAHistory();
 }
 
 function toggleRPAHistory() {
@@ -694,7 +756,7 @@ function loadRPA(id) {
         document.getElementById('rpa-prov-cpf').value = r.fullData.provCpf;
         document.getElementById('rpa-prov-phone').value = r.fullData.provPhone;
         document.getElementById('rpa-prov-addr').value = r.fullData.provAddr;
-        calculateRPA(); alert('RPA Carregado.'); window.scrollTo(0,0);
+        calculateRPA(); showToast('RPA Carregado.', 'info'); window.scrollTo(0,0);
     }
 }
 
@@ -851,7 +913,7 @@ function renderCrud(type) {
 
 function openCrudModal(isEdit = false, itemData = null) { document.getElementById('modal-crud').classList.remove('hidden'); document.getElementById('crud-id').value = itemData ? itemData.id : ''; const fields = document.getElementById('crud-fields'); if(currentCrudType.match(/products|services/)) { fields.innerHTML = `<label>Nome</label><input name="name" value="${itemData?.name||''}" required><label>Preço</label><input type="number" step="0.01" name="price" value="${itemData?.price||''}" required><label>Descrição</label><textarea name="description" rows="3">${itemData?.description||''}</textarea>`; } else { fields.innerHTML = `<label>Nome/Razão</label><input name="name" value="${itemData?.name||''}" required><label>Contato</label><input name="contact_person" value="${itemData?.contact_person||''}"><label>CPF/CNPJ</label><input name="cnpj_cpf" value="${itemData?.cnpj_cpf||''}"><label>Endereço</label><input name="address" value="${itemData?.address||''}"><label>Telefone</label><input name="phone" value="${itemData?.phone||''}"><label>Email</label><input name="email" value="${itemData?.email||''}">`; } }
 function editCrudItem(id) { const item = getUserData()[currentCrudType].find(i => i.id === id); if (item) openCrudModal(true, item); }
-function saveCrudItem(e) { e.preventDefault(); const id = document.getElementById('crud-id').value; const t = e.target; const item = { id: id || 'i_'+Date.now(), name: t.name.value, price: t.price?.value, description: t.description?.value, contact_person: t.contact_person?.value, phone: t.phone?.value, address: t.address?.value, cnpj_cpf: t.cnpj_cpf?.value, email: t.email?.value }; const list = getUserData()[currentCrudType]; const idx = list.findIndex(i => i.id === id); idx !== -1 ? list[idx] = item : list.push(item); saveData(); closeModal('modal-crud'); renderCrud(currentCrudType); }
+function saveCrudItem(e) { e.preventDefault(); const id = document.getElementById('crud-id').value; const t = e.target; const item = { id: id || 'i_'+Date.now(), name: t.name.value, price: t.price?.value, description: t.description?.value, contact_person: t.contact_person?.value, phone: t.phone?.value, address: t.address?.value, cnpj_cpf: t.cnpj_cpf?.value, email: t.email?.value }; const list = getUserData()[currentCrudType]; const idx = list.findIndex(i => i.id === id); idx !== -1 ? list[idx] = item : list.push(item); saveData(); closeModal('modal-crud'); renderCrud(currentCrudType); showToast('Item salvo.', 'success'); }
 function deleteCrudItem(t,id){ if(confirm('Apagar?')){const l=getUserData()[t]; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderCrud(t);} }
 function getUserData() { return appData.records[appData.currentUser.id]; }
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
@@ -873,9 +935,9 @@ function validateLicense() {
         appData.currentUser.licenseExpire += d * 86400000;
         saveData();
         checkLicense();
-        alert('Ok');
+        showToast('Licença validada!', 'success');
     } else {
-        alert('Erro'); 
+        showToast('Código inválido.', 'error');
     }
 }
 
@@ -906,7 +968,7 @@ function editTransaction(id){
     document.getElementById('modal-transaction').classList.remove('hidden'); 
 }
 
-function saveTransaction(e){ e.preventDefault(); const id=document.getElementById('trans-id').value; const t={id:id||'t_'+Date.now(), type:document.getElementById('trans-type').value, category:document.getElementById('trans-category').value, value:parseFloat(document.getElementById('trans-value').value), date:document.getElementById('trans-date').value, obs:document.getElementById('trans-obs').value, entity:document.getElementById('trans-entity').value}; const l=getUserData().transactions; const i=l.findIndex(x=>x.id===t.id); i!==-1?l[i]=t:l.push(t); saveData(); closeModal('modal-transaction'); renderTransactions(); }
+function saveTransaction(e){ e.preventDefault(); const id=document.getElementById('trans-id').value; const t={id:id||'t_'+Date.now(), type:document.getElementById('trans-type').value, category:document.getElementById('trans-category').value, value:parseFloat(document.getElementById('trans-value').value), date:document.getElementById('trans-date').value, obs:document.getElementById('trans-obs').value, entity:document.getElementById('trans-entity').value}; const l=getUserData().transactions; const i=l.findIndex(x=>x.id===t.id); i!==-1?l[i]=t:l.push(t); saveData(); closeModal('modal-transaction'); renderTransactions(); showToast('Transação salva.', 'success'); }
 function deleteTransaction(id){ if(confirm('Apagar?')){const l=getUserData().transactions; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderTransactions();} }
 
 function updateTransactionDependencies(){
@@ -939,39 +1001,41 @@ function renderIrrf(){ document.getElementById('irrf-table-body').innerHTML=appD
 function deleteIrrfRow(id){ appData.irrfTable.splice(appData.irrfTable.findIndex(r=>r.id===id),1); saveData(); renderIrrf(); }
 function openIrrfModal(){ document.getElementById('form-irrf').reset(); document.getElementById('irrf-id').value = ''; document.getElementById('modal-irrf').classList.remove('hidden'); }
 function editIrrfRow(id) { const row = appData.irrfTable.find(r => r.id === id); if(row) { document.getElementById('irrf-id').value = row.id; document.getElementById('irrf-max').value = row.max; document.getElementById('irrf-rate').value = row.rate; document.getElementById('irrf-deduction').value = row.deduction; document.getElementById('modal-irrf').classList.remove('hidden'); } }
-function saveIrrfRow(e){ e.preventDefault(); const id = document.getElementById('irrf-id').value; const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target[3].value) }; if (id) { const idx = appData.irrfTable.findIndex(r => r.id === id); if (idx !== -1) appData.irrfTable[idx] = data; } else { appData.irrfTable.push(data); } saveData(); closeModal('modal-irrf'); renderIrrf(); }
+function saveIrrfRow(e){ e.preventDefault(); const id = document.getElementById('irrf-id').value; const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target[3].value) }; if (id) { const idx = appData.irrfTable.findIndex(r => r.id === id); if (idx !== -1) appData.irrfTable[idx] = data; } else { appData.irrfTable.push(data); } saveData(); closeModal('modal-irrf'); renderIrrf(); showToast('Tabela IRRF salva.', 'success'); }
 
-// --- MANUAL SYNC TRIGGER ---
+// --- MANUAL SYNC TRIGGER (REVISADO) ---
 async function triggerManualSync() {
     const btn = document.getElementById('btn-manual-sync');
     const originalText = btn.innerHTML;
 
     if (!navigator.onLine) {
-        alert('Você está Offline. Os dados serão salvos localmente e sincronizados quando a conexão retornar.');
+        showToast("Você está Offline. Dados salvos apenas localmente.", "info");
     }
 
     btn.innerHTML = '⏳ Sincronizando...';
     btn.disabled = true;
 
     try {
-        await saveData(); 
-        setTimeout(() => {
-            btn.innerHTML = '✅ Concluído!';
-            setTimeout(() => {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }, 1500);
-        }, 500);
+        // Agora aguardamos o resultado explícito da promessa
+        // e passamos true para indicar que é um sync manual (ativa toasts)
+        const result = await saveData(true);
         
-    } catch (e) {
-        // Agora usa a mensagem diagnosticada pelo DataManager
-        const friendlyMsg = DataManager.diagnoseError(e);
-        alert(`Falha na Sincronização:\n${friendlyMsg}\n\nConsulte o console para detalhes técnicos.`);
-        btn.innerHTML = '⚠️ Erro';
+        if (result.error) {
+            // Se houve erro (mesmo salvando local), o saveData já mostrou o toast de erro
+            // Aqui apenas restauramos o botão
+        } 
+        
+        // Pequeno delay visual
         setTimeout(() => {
             btn.innerHTML = originalText;
             btn.disabled = false;
-        }, 2000);
+        }, 1000);
+        
+    } catch (e) {
+        showToast('Erro crítico ao tentar sincronizar.', 'error');
+        console.error(e);
+        btn.innerHTML = originalText;
+        btn.disabled = false;
     }
 }
 
