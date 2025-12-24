@@ -1,22 +1,25 @@
 <!DOCTYPE html>
 <!-- 
-    GESTOR MEI - VERSÃO V11.5 (HÍBRIDO & SEGURO) - ESTRUTURA
+    GESTOR MEI - VERSÃO V11.6 (HÍBRIDO & DOCUMENTOS HD) - ESTRUTURA
     
     ARQUIVOS INTEGRANTES:
     1. index.html (Estrutura)
     2. style.css (Estilos e Temas)
-    3. script.js (Lógica, Banco de Dados Híbrido e Regras de Negócio)
+    3. script.js (Lógica, Banco de Dados Híbrido, Regras de Negócio e Geração de Docs)
 -->
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor MEI - Sistema Híbrido V11.5</title>
+    <title>Gestor MEI - Sistema Híbrido V11.6</title>
     
     <!-- FIREBASE SDK (Compatibilidade Híbrida) -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <!-- HTML2PDF (Geração de PDF Alta Resolução) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <!-- Estilos Separados -->
     <link rel="stylesheet" href="style.css">
@@ -122,8 +125,8 @@
                 <div class="view-header flex justify-between items-center">
                     <h1>Relatórios</h1>
                     <div class="no-print">
-                        <button class="btn-primary" onclick="exportReportPDF()">🖨️ PDF</button>
-                        <button class="btn-info" onclick="exportReportDoc()">📄 Word</button>
+                        <button class="btn-primary" onclick="exportReportPDF()">🖨️ PDF (HD)</button>
+                        <button class="btn-info" onclick="exportReportDoc()">📄 Word (DOCX)</button>
                     </div>
                 </div>
                 <div class="tabs no-print">
@@ -183,8 +186,8 @@
                                 <button class="btn-warning w-full" onclick="toggleRPAHistory()">📜 Histórico</button>
                             </div>
                             <div class="flex gap-2">
-                                <button class="btn-primary w-full" onclick="exportRPAPdf()">🖨️ PDF</button>
-                                <button class="btn-info w-full" onclick="exportRPADoc()">📄 Word</button>
+                                <button class="btn-primary w-full" onclick="exportRPAPdf()">🖨️ PDF (HD)</button>
+                                <button class="btn-info w-full" onclick="exportRPADoc()">📄 Word (DOCX)</button>
                             </div>
                         </div>
                     </div>
@@ -328,6 +331,16 @@
                         <input type="number" id="license-days-input" placeholder="Dias">
                         <button class="btn-success" onclick="sendWhatsApp()">📱 WhatsApp</button>
                         <div class="flex gap-2"><input type="number" id="license-key-input" placeholder="Contra-senha"><button class="btn-primary" onclick="validateLicense()">Validar</button></div>
+                    </div>
+                </div>
+
+                <!-- ADMIN TOOLS (Somente para jcnvap@gmail.com) -->
+                <div id="admin-tools" class="stat-card mb-4 hidden" style="border-left: 5px solid #7c3aed;">
+                    <h3>🛠️ Ferramentas Administrativas (Admin)</h3>
+                    <p class="text-sm text-light mb-2">Visível apenas para o desenvolvedor.</p>
+                    <div class="flex gap-2 mt-4 flex-col md:flex-row">
+                        <button class="btn-primary w-full" style="background-color: #7c3aed;" onclick="adminFillData()">📝 Preencher Dados Teste (Valores Normais)</button>
+                        <button class="btn-danger w-full" onclick="adminClearData()">🧹 Limpar Todos os Arquivos</button>
                     </div>
                 </div>
             </section>

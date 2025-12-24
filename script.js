@@ -10,14 +10,10 @@ const LIC_YEAR_BASE = 1954;
 
 // Configuração Firebase (Adicione suas chaves aqui)
 const firebaseConfig = {
-  apiKey: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo",
-  authDomain: "projeto-bfed3.firebaseapp.com",
-  projectId: "projeto-bfed3",
-  storageBucket: "projeto-bfed3.firebasestorage.app",
-  messagingSenderId: "785289237066",
-  appId: "1:785289237066:web:8206fe2e1073db72d5ccb3"
+    // apiKey: "...",
+    // authDomain: "...",
+    // projectId: "...",
 };
-
 
 // --- GESTOR DE DADOS HÍBRIDO (REGRA DE OPERAÇÃO CRUD) ---
 const DataManager = {
@@ -290,6 +286,122 @@ function loadSettings() {
     document.getElementById('conf-url-das').value = c.url_das || DEFAULT_URL_DAS;
     document.getElementById('conf-reserve-rate').value = c.reserve_rate || 10;
     document.getElementById('conf-prolabore-target').value = c.prolabore_target || 4000;
+
+    // ADMIN TOOLS CHECK
+    const adminDiv = document.getElementById('admin-tools');
+    if (appData.currentUser.email === 'jcnvap@gmail.com') {
+        adminDiv.classList.remove('hidden');
+    } else {
+        adminDiv.classList.add('hidden');
+    }
+}
+
+// ADMIN FUNCTIONS (Somente jcnvap@gmail.com)
+function adminFillData() {
+    if (appData.currentUser.email !== 'jcnvap@gmail.com') return;
+    if (!confirm('ATENÇÃO: Isso preencherá o sistema com dados fictícios para teste. Continuar?')) return;
+
+    const today = new Date();
+    const formatDate = (date) => date.toISOString().split('T')[0];
+    
+    // 1. Dados da Empresa
+    appData.currentUser.company = {
+        name: "Empresa Modelo Tech Ltda",
+        cnpj: "12.345.678/0001-90",
+        address: "Av. Paulista, 1000 - São Paulo, SP",
+        phone: "(11) 98765-4321",
+        whatsapp: "(11) 98765-4321",
+        role: "both",
+        url_fiscal: DEFAULT_URL_FISCAL,
+        url_das: DEFAULT_URL_DAS,
+        reserve_rate: 15,
+        prolabore_target: 5000
+    };
+
+    const rec = appData.records[appData.currentUser.id];
+    
+    // 2. Clientes
+    rec.clients = [
+        {id: 'c1', name: 'Supermercado Silva', phone: '(11) 91111-1111', address: 'Rua A, 1', cnpj_cpf: '11.111.111/0001-11', contact_person: 'Sr. Silva', email: 'silva@email.com'},
+        {id: 'c2', name: 'Padaria Central', phone: '(11) 92222-2222', address: 'Rua B, 2', cnpj_cpf: '22.222.222/0001-22', contact_person: 'Maria', email: 'maria@email.com'},
+        {id: 'c3', name: 'João Pessoa Física', phone: '(11) 93333-3333', address: 'Rua C, 3', cnpj_cpf: '333.333.333-33', contact_person: 'João', email: 'joao@email.com'},
+        {id: 'c4', name: 'Consultório Dr. André', phone: '(11) 94444-4444', address: 'Rua D, 4', cnpj_cpf: '44.444.444/0001-44', contact_person: 'André', email: 'andre@email.com'},
+        {id: 'c5', name: 'Escola Futuro', phone: '(11) 95555-5555', address: 'Rua E, 5', cnpj_cpf: '55.555.555/0001-55', contact_person: 'Diretora Ana', email: 'ana@email.com'}
+    ];
+
+    // 3. Fornecedores
+    rec.suppliers = [
+        {id: 's1', name: 'Distribuidora Tech', phone: '(11) 81111-1111', address: 'Av Ind, 100', cnpj_cpf: '66.666.666/0001-66', contact_person: 'Roberto', email: 'vendas@tech.com'},
+        {id: 's2', name: 'Papelaria Atacado', phone: '(11) 82222-2222', address: 'Av Com, 200', cnpj_cpf: '77.777.777/0001-77', contact_person: 'Julia', email: 'julia@papel.com'},
+        {id: 's3', name: 'Internet Provider', phone: '(11) 0800-0000', address: 'Web', cnpj_cpf: '88.888.888/0001-88', contact_person: 'Suporte', email: 'suporte@net.com'}
+    ];
+
+    // 4. Produtos & Serviços
+    rec.products = [
+        {id: 'p1', name: 'Mouse Sem Fio', price: 45.90, description: 'Mouse óptico genérico'},
+        {id: 'p2', name: 'Teclado Mecânico', price: 150.00, description: 'Teclado RGB'},
+        {id: 'p3', name: 'Cabo HDMI 2m', price: 25.00, description: 'Cabo 4k'},
+        {id: 'p4', name: 'Monitor 24pol', price: 800.00, description: 'Full HD'},
+        {id: 'p5', name: 'Suporte Notebook', price: 60.00, description: 'Alumínio'}
+    ];
+    rec.services = [
+        {id: 'sv1', name: 'Formatação PC', price: 120.00, description: 'Backup incluso'},
+        {id: 'sv2', name: 'Instalação Rede', price: 250.00, description: 'Por ponto'},
+        {id: 'sv3', name: 'Consultoria TI', price: 100.00, description: 'Valor hora'}
+    ];
+
+    // 5. Transações (Gerar histórico para gráficos)
+    rec.transactions = [];
+    const catsIn = ['Venda', 'Serviço', 'Outros'];
+    const catsOut = ['Compra', 'Despesa', 'Imposto', 'Gastos Pessoais'];
+    
+    // Gerar 20 transações aleatórias nos últimos 60 dias
+    for(let i=0; i<25; i++) {
+        const isReceita = Math.random() > 0.4; // 60% chance receita
+        const pastDate = new Date();
+        pastDate.setDate(today.getDate() - Math.floor(Math.random() * 60));
+        
+        rec.transactions.push({
+            id: 't_admin_'+i,
+            type: isReceita ? 'receita' : 'despesa',
+            category: isReceita ? catsIn[Math.floor(Math.random()*catsIn.length)] : catsOut[Math.floor(Math.random()*catsOut.length)],
+            value: parseFloat((Math.random() * (isReceita ? 500 : 200) + 50).toFixed(2)),
+            date: formatDate(pastDate),
+            entity: isReceita ? rec.clients[Math.floor(Math.random()*rec.clients.length)].name : rec.suppliers[Math.floor(Math.random()*rec.suppliers.length)].name,
+            obs: 'Gerado automaticamente'
+        });
+    }
+
+    // 6. Agenda (Compromissos)
+    rec.appointments = [
+        {id: 'apt1', title: 'Manutenção Servidor', date: formatDate(today), time: '14:00', client_name: 'Escola Futuro', service_desc: 'Verificar lentidão', value: 300, status: 'agendado', pay_status: 'pendente', pay_method: 'pix'},
+        {id: 'apt2', title: 'Entrega Equipamento', date: formatDate(new Date(today.getTime() + 86400000)), time: '10:00', client_name: 'Supermercado Silva', service_desc: 'Entrega monitor', value: 800, status: 'agendado', pay_status: 'pago', pay_method: 'cartao'},
+        {id: 'apt3', title: 'Visita Técnica', date: formatDate(new Date(today.getTime() - 86400000)), time: '09:00', client_name: 'Padaria Central', service_desc: 'Configurar impressora', value: 120, status: 'concluido', pay_status: 'pago', pay_method: 'dinheiro'}
+    ];
+
+    saveData();
+    alert('Dados de teste gerados com sucesso! O painel foi atualizado.');
+    location.reload(); // Recarrega para garantir atualização total das views
+}
+
+function adminClearData() {
+    if (appData.currentUser.email !== 'jcnvap@gmail.com') return;
+    if (!confirm('PERIGO: Isso apagará TODOS os cadastros, financeiro, agenda e RPA. Deseja realmente limpar tudo?')) return;
+
+    appData.records[appData.currentUser.id] = {
+        products: [], services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointments: []
+    };
+    
+    // Reseta configurações básicas da empresa, mantendo apenas o essencial para não quebrar
+    appData.currentUser.company = {
+        name: "", cnpj: "", address: "", phone: "", whatsapp: "", role: "both",
+        url_fiscal: DEFAULT_URL_FISCAL, url_das: DEFAULT_URL_DAS,
+        reserve_rate: 10, prolabore_target: 4000
+    };
+
+    saveData();
+    alert('Sistema limpo com sucesso.');
+    location.reload();
 }
 
 function saveCompanyData(e) {
@@ -539,11 +651,159 @@ function loadRPA(id) {
 }
 
 function deleteRPA(id) { if(confirm('Excluir este RPA?')) { const l = getUserData().rpas; l.splice(l.findIndex(r => r.id === id), 1); saveData(); toggleRPAHistory(); } }
-function exportRPAPdf() { document.querySelectorAll('section').forEach(s => s.classList.remove('active-print')); document.getElementById('view-rpa').classList.add('active-print'); window.print(); }
-function exportRPADoc() { const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>RPA</title></head><body><h2 style="text-align:center">RPA - ${appData.currentUser.company.name}</h2><br><h3>1. Contratante</h3><p>Razão: ${document.getElementById('rpa-comp-name').value}</p><p>CNPJ: ${document.getElementById('rpa-comp-cnpj').value}</p><hr><h3>2. Autônomo</h3><p>Nome: ${document.getElementById('rpa-prov-name').value}</p><p>CPF: ${document.getElementById('rpa-prov-cpf').value}</p><hr><h3>3. Serviço</h3><p>${document.getElementById('rpa-desc').value}</p><p>Data: ${document.getElementById('rpa-date').value}</p><hr><h3>4. Valores</h3><p>Bruto: R$ ${document.getElementById('rpa-value').value}</p><p>Líquido: ${document.getElementById('rpa-net').value}</p></body></html>`; const blob = new Blob([html], { type: 'application/msword' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'RPA.doc'; a.click(); }
 
-function exportReportPDF() { document.getElementById('report-company-header').innerText = appData.currentUser.company.name || "Minha Empresa"; document.querySelectorAll('section').forEach(s => s.classList.remove('active-print')); document.getElementById('view-listagens').classList.add('active-print'); window.print(); }
-function exportReportDoc() { const header = `<h2>${appData.currentUser.company.name || "Minha Empresa"}</h2>`; const table = document.getElementById('listing-table').outerHTML; const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>Relatório</title></head><body>${header}<h3>Relatório do Sistema</h3>${table}</body></html>`; const blob = new Blob([html], { type: 'application/msword' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `Relatorio.doc`; a.click(); }
+// --- HELPERS PARA EXPORTAÇÃO DE DOCUMENTOS (PDF Alta Qualidade e DOCX) ---
+
+// Função auxiliar para preparar o DOM (copia valores de inputs para atributos HTML visíveis)
+function prepareForExport(elementId) {
+    const element = document.getElementById(elementId);
+    // Copia valores de inputs para o atributo 'value' para que apareçam no PDF/HTML
+    const inputs = element.querySelectorAll('input, select, textarea');
+    inputs.forEach(input => {
+        if(input.tagName === 'SELECT') {
+            const selected = input.options[input.selectedIndex];
+            input.setAttribute('data-export-value', selected ? selected.text : '');
+        } else {
+            input.setAttribute('value', input.value);
+        }
+    });
+    return element;
+}
+
+function exportRPAPdf() {
+    prepareForExport('rpa-content');
+    const element = document.getElementById('rpa-content');
+    
+    // Configurações para Alta Qualidade (300dpi, A4)
+    const opt = {
+        margin:       10,
+        filename:     'RPA.pdf',
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { scale: 2 }, // Aumenta resolução
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(element).save();
+}
+
+function exportRPADoc() {
+    prepareForExport('rpa-content');
+    
+    // Captura os valores atuais pois inputs HTML puros não levam o texto digitado
+    const company = document.getElementById('rpa-comp-name').value;
+    const cnpj = document.getElementById('rpa-comp-cnpj').value;
+    const provName = document.getElementById('rpa-prov-name').value;
+    const provCpf = document.getElementById('rpa-prov-cpf').value;
+    const desc = document.getElementById('rpa-desc').value;
+    const date = document.getElementById('rpa-date').value;
+    const value = document.getElementById('rpa-value').value;
+    const net = document.getElementById('rpa-net').value;
+
+    // Cria um HTML limpo para o Word, garantindo compatibilidade
+    const htmlContent = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+            <meta charset='utf-8'>
+            <title>RPA</title>
+            <style>
+                body { font-family: 'Arial', sans-serif; font-size: 12pt; }
+                h2 { text-align: center; text-decoration: underline; }
+                p { margin: 5px 0; }
+                hr { border: 0; border-top: 1px solid #ccc; margin: 20px 0; }
+                .section { margin-bottom: 20px; border: 1px solid #eee; padding: 10px; }
+                .label { font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <h2>RECIBO DE PAGAMENTO A AUTÔNOMO (RPA)</h2>
+            <br>
+            <div class="section">
+                <h3>1. Contratante</h3>
+                <p><span class="label">Razão Social:</span> ${company}</p>
+                <p><span class="label">CNPJ:</span> ${cnpj}</p>
+            </div>
+            <div class="section">
+                <h3>2. Autônomo</h3>
+                <p><span class="label">Nome:</span> ${provName}</p>
+                <p><span class="label">CPF:</span> ${provCpf}</p>
+            </div>
+            <div class="section">
+                <h3>3. Serviço</h3>
+                <p><span class="label">Descrição:</span> ${desc}</p>
+                <p><span class="label">Data:</span> ${date}</p>
+            </div>
+            <div class="section">
+                <h3>4. Valores</h3>
+                <p><span class="label">Valor Bruto:</span> R$ ${value}</p>
+                <p><span class="label">Valor Líquido:</span> ${net}</p>
+            </div>
+            <br><br>
+            <p>Declaro que recebi o valor acima.</p>
+            <br><br>
+            <p>______________________________________</p>
+            <p>Assinatura do Prestador</p>
+        </body>
+        </html>`;
+    
+    const blob = new Blob([htmlContent], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'RPA.doc';
+    a.click();
+}
+
+function exportReportPDF() {
+    document.getElementById('report-company-header').innerText = appData.currentUser.company.name || "Minha Empresa";
+    document.getElementById('report-title').classList.remove('hidden');
+    
+    // Mostra área de relatório, esconde o resto temporariamente
+    const element = document.getElementById('report-print-area');
+    
+    const opt = {
+        margin:       10,
+        filename:     'Relatorio.pdf',
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { scale: 2 },
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' } // Landscape para tabelas
+    };
+
+    html2pdf().set(opt).from(element).save().then(() => {
+         document.getElementById('report-title').classList.add('hidden');
+    });
+}
+
+function exportReportDoc() {
+    const header = `<h2 style="text-align:center">${appData.currentUser.company.name || "Minha Empresa"}</h2>`;
+    const table = document.getElementById('listing-table').outerHTML;
+    
+    const html = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+            <meta charset='utf-8'>
+            <title>Relatório</title>
+            <style>
+                body { font-family: 'Arial', sans-serif; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #000; padding: 5px; text-align: left; }
+                th { background-color: #f0f0f0; }
+            </style>
+        </head>
+        <body>
+            ${header}
+            <h3 style="text-align:center">Relatório do Sistema</h3>
+            <br>
+            ${table}
+        </body>
+        </html>`;
+        
+    const blob = new Blob([html], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Relatorio.doc`;
+    a.click();
+}
 
 function renderCrud(type) { 
     currentCrudType = type; 
