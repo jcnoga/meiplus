@@ -10,12 +10,12 @@ const LIC_YEAR_BASE = 1954;
 
 // Configuração Firebase (Adicione suas chaves aqui)
 const firebaseConfig = {
-  apiKey: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo",
-  authDomain: "projeto-bfed3.firebaseapp.com",
-  projectId: "projeto-bfed3",
-  storageBucket: "projeto-bfed3.firebasestorage.app",
-  messagingSenderId: "785289237066",
-  appId: "1:785289237066:web:11fdd8f617a65911d5ccb3"
+  apiKey¡:: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo"‚,
+  authDomínio¡:: "projeto-bfed3.firebaseapp.com"‚,
+  projetoId¡:: "projeto-bfed3"‚,
+  armazenamentoBucket¡:: "projeto-bfed3.firebasestorage.app"‚,
+  mensagensSenderId¡:: "785289237066"‚,
+  AppId¡:: "1:785289237066:web:8206fe2e1073db72d5ccb3"
 };
 
 // --- GESTOR DE DADOS HÍBRIDO (REGRA DE OPERAÇÃO CRUD) ---
@@ -24,6 +24,19 @@ const DataManager = {
     storeName: 'mei_data',
     isDirty: false, // Flag para indicar dados pendentes de sincronização
     
+    // Helper de diagnóstico de erros
+    diagnoseError(e) {
+        let msg = "Erro desconhecido.";
+        if (!navigator.onLine) return "Sem conexão com a internet.";
+        if (e.code === 'permission-denied') msg = "Permissão negada. Verifique as regras do Firebase.";
+        else if (e.code === 'unavailable') msg = "Serviço indisponível temporariamente.";
+        else if (e.code === 'resource-exhausted') msg = "Cota do Firebase excedida.";
+        else if (e.message && e.message.includes("API key")) msg = "Chave API do Firebase inválida ou ausente.";
+        
+        console.error(`[SYNC DIAGNOSTIC] ${msg}`, e);
+        return msg;
+    },
+
     async initDB() {
         return new Promise((resolve, reject) => {
             const req = indexedDB.open(this.dbName, 1);
@@ -38,7 +51,7 @@ const DataManager = {
         });
     },
 
-    // A REGRA CENTRAL DE CRUD HÍBRIDO (CORRIGIDA)
+    // A REGRA CENTRAL DE CRUD HÍBRIDO (CORRIGIDA & DIAGNOSTICADA)
     async save(data) {
         // 1. Persistência Local Obrigatória (IndexedDB)
         try {
@@ -52,7 +65,6 @@ const DataManager = {
         } catch(e) { console.error("Erro Crítico ao Salvar Localmente", e); }
 
         // 2. Tentativa de Sincronização em Nuvem (Firebase)
-        // Correção: Validação de Config e Sanitização
         if (navigator.onLine && firebaseConfig.apiKey && firebase.apps.length && data.currentUser) {
             try {
                 const dbCloud = firebase.firestore();
@@ -61,17 +73,18 @@ const DataManager = {
                 
                 await dbCloud.collection('users').doc(data.currentUser.id).set(payload);
                 this.isDirty = false;
-                this.updateSyncStatus(true);
+                this.updateSyncStatus('online');
                 console.log("Dados Sincronizados com a Nuvem.");
             } catch(e) { 
-                console.error("Falha no envio para Nuvem:", e); 
+                this.diagnoseError(e);
                 this.isDirty = true;
-                this.updateSyncStatus(false);
+                this.updateSyncStatus('error');
+                throw e; // Repassa erro para quem chamou (ex: manual sync)
             }
         } else {
             // Se offline ou sem config, marca como pendente
             this.isDirty = true;
-            this.updateSyncStatus(false);
+            this.updateSyncStatus('offline');
         }
     },
 
@@ -105,7 +118,9 @@ const DataManager = {
                     console.log("Backup encontrado na nuvem.");
                     return doc.data();
                 }
-            } catch(e) { console.error("Erro ao buscar backup na nuvem:", e); }
+            } catch(e) { 
+                this.diagnoseError(e); 
+            }
         }
         return null;
     },
@@ -116,18 +131,22 @@ const DataManager = {
             console.log("Reconectado! Tentando sincronizar pendências...");
             await this.save(currentData);
         } else {
-            this.updateSyncStatus(true);
+            this.updateSyncStatus('online');
         }
     },
 
-    updateSyncStatus(isOnline) {
+    updateSyncStatus(status) { // 'online', 'offline', 'error'
         const el = document.getElementById('sync-indicator');
         if(el) {
-            if (isOnline) {
-                el.className = 'sync-status sync-online';
+            el.className = 'sync-status'; // Reset
+            if (status === 'online') {
+                el.classList.add('sync-online');
                 el.title = 'Sincronizado (Nuvem)';
+            } else if (status === 'error') {
+                el.classList.add('sync-error');
+                el.title = 'Erro na Sincronização (Verifique Console)';
             } else {
-                el.className = 'sync-status sync-offline';
+                el.classList.add('sync-offline');
                 el.title = 'Armazenamento Local (Pendente Envio)';
             }
         }
@@ -158,7 +177,7 @@ let currentFinanceFilter = 'all';
 
 async function init() {
     window.addEventListener('online', () => DataManager.forceSync(appData));
-    window.addEventListener('offline', () => DataManager.updateSyncStatus(false));
+    window.addEventListener('offline', () => DataManager.updateSyncStatus('offline'));
 
     const loadedData = await DataManager.load();
     if (loadedData) appData = loadedData;
@@ -181,16 +200,12 @@ async function saveData() {
 
 // CORREÇÃO: Sync Bidirecional no Login
 async function loginUser(user) {
-    // 1. Tenta recuperar backup da nuvem se os dados locais estiverem vazios para este usuário
-    // ou se o usuário não existir no appData local (ex: novo dispositivo)
     const localUserRecord = appData.records[user.id];
     
     if (!localUserRecord && navigator.onLine) {
         const cloudData = await DataManager.loadCloudData(user.id);
         if (cloudData) {
-            // Merge cuidadoso ou substituição total (Opção: Substituição total para consistência de backup)
             appData = cloudData;
-            // Atualiza a referência do usuário para o objeto que veio da nuvem
             user = appData.users.find(u => u.id === user.id) || user;
             console.log("Dados restaurados da nuvem.");
         }
@@ -203,10 +218,7 @@ async function loginUser(user) {
     document.getElementById('app-container').classList.remove('hidden');
     document.getElementById('user-name-display').innerText = user.name;
     
-    // Garante estrutura mínima
     if(!appData.records[user.id]) {
-        // Se ainda não tem registros (nem local nem nuvem), cria seed limpo
-        // Isso evita erros de undefined ao tentar acessar records[user.id]
         appData.records[user.id] = createSeedData().records[user.id] || { 
             products: [], services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointments: [] 
         };
@@ -216,8 +228,8 @@ async function loginUser(user) {
     
     checkLicense(); navTo('dashboard'); loadFiscalReminders();
     
-    DataManager.updateSyncStatus(navigator.onLine);
-    saveData(); // Salva localmente o que acabou de ser carregado (ou criado)
+    DataManager.updateSyncStatus(navigator.onLine ? 'online' : 'offline');
+    saveData(); 
 }
 
 function logout() { appData.currentUser = null; sessionStorage.removeItem('mei_user_id'); location.reload(); }
@@ -246,7 +258,6 @@ function handleGoogleLogin() {
                 company: { reserve_rate: 10, prolabore_target: 4000 }
             };
             appData.users.push(appUser);
-            // Inicializa records vazio, será preenchido pelo loadCloudData ou createSeedData no loginUser
             appData.records[appUser.id] = createSeedData().records[appUser.id]; 
         }
         loginUser(appUser);
@@ -256,10 +267,7 @@ function handleGoogleLogin() {
 }
 
 function createSeedData() {
-    // Retorna estrutura completa para uso inicial
     const today = new Date().toISOString().split('T')[0];
-    // OBS: Ajustado para retornar estrutura compatível com a lógica de records[id]
-    // Mas aqui retornamos o objeto "records" simulado para extração
     return {
         records: {
             placeholder_id: {
@@ -278,7 +286,6 @@ function createSeedData() {
     };
 }
 
-// Registro Manual corrigido para usar Seed
 document.getElementById('register-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const email = document.getElementById('reg-email').value;
@@ -292,7 +299,6 @@ document.getElementById('register-form').addEventListener('submit', (e) => {
     };
     appData.users.push(newUser); 
     
-    // Seed Manual
     const seed = createSeedData().records.placeholder_id;
     appData.records[newUser.id] = seed;
     
@@ -958,10 +964,14 @@ async function triggerManualSync() {
         }, 500);
         
     } catch (e) {
-        alert('Erro ao sincronizar. Verifique sua conexão.');
-        console.error(e);
-        btn.innerHTML = originalText;
-        btn.disabled = false;
+        // Agora usa a mensagem diagnosticada pelo DataManager
+        const friendlyMsg = DataManager.diagnoseError(e);
+        alert(`Falha na Sincronização:\n${friendlyMsg}\n\nConsulte o console para detalhes técnicos.`);
+        btn.innerHTML = '⚠️ Erro';
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }, 2000);
     }
 }
 

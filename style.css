@@ -149,6 +149,7 @@ tr:hover { background-color: #f9fafb; }
 .sync-status { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
 .sync-online { background-color: var(--success); box-shadow: 0 0 5px var(--success); }
 .sync-offline { background-color: var(--text-light); }
+.sync-error { background-color: var(--danger); box-shadow: 0 0 5px var(--danger); }
 
 /* Mobile Responsive */
 @media (max-width: 768px) {
