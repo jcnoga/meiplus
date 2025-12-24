@@ -8,7 +8,8 @@ const LIC_PAD_VAL = 13;
 const LIC_MULT_FACTOR = 9;
 const LIC_YEAR_BASE = 1954;
 
-// Configuração Firebase
+// --- CONFIGURAÇÃO FIREBASE ---
+// Certifique-se de que o Authentication (Email/Senha e Google) e Firestore estão ativos no console.
 const firebaseConfig = {
   apiKey: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo",
   authDomain: "projeto-bfed3.firebaseapp.com",
@@ -18,7 +19,22 @@ const firebaseConfig = {
   appId: "1:785289237066:web:8206fe2e1073db72d5ccb3"
 };
 
-// --- FUNÇÃO AUXILIAR DE NOTIFICAÇÃO (TOAST) ---
+// --- VARIÁVEIS GLOBAIS ---
+let appData = { currentUser: null, users: [], records: {}, irrfTable: [] };
+let isFirebaseReady = false;
+let currentCrudType = 'products'; 
+let currentListingType = 'clients'; 
+let currentFinanceFilter = 'all';
+
+const DEFAULT_IRRF = [
+    { id: 'irrf_1', max: 2259.20, rate: 0, deduction: 0 },
+    { id: 'irrf_2', max: 2826.65, rate: 7.5, deduction: 169.44 },
+    { id: 'irrf_3', max: 3751.05, rate: 15, deduction: 381.44 },
+    { id: 'irrf_4', max: 4664.68, rate: 22.5, deduction: 662.77 },
+    { id: 'irrf_5', max: 99999999, rate: 27.5, deduction: 896.00 }
+];
+
+// --- SISTEMA DE NOTIFICAÇÃO (TOAST) ---
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     if (!container) return;
@@ -26,11 +42,7 @@ function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     
-    let icon = '';
-    if(type === 'success') icon = '✅ ';
-    if(type === 'error') icon = '❌ ';
-    if(type === 'info') icon = 'ℹ️ ';
-
+    let icon = type === 'success' ? '✅ ' : type === 'error' ? '❌ ' : 'ℹ️ ';
     toast.innerText = icon + message;
     container.appendChild(toast);
 
@@ -40,23 +52,33 @@ function showToast(message, type = 'info') {
     }, 4000);
 }
 
-// --- LOGICA DE SINCRONIZAÇÃO E MERGE (SYNC ENGINE) ---
+function translateFirebaseError(error) {
+    console.warn("Firebase Error:", error);
+    if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') return "E-mail ou senha incorretos.";
+    if (error.code === 'auth/email-already-in-use') return "Este e-mail já está em uso.";
+    if (error.code === 'auth/network-request-failed') return "Sem conexão com a internet.";
+    if (error.code === 'permission-denied') return "Permissão negada. Tente sair e entrar novamente.";
+    return error.message;
+}
+
+// --- SYNC ENGINE (LÓGICA DE MERGE E CONFLITOS) ---
 const SyncEngine = {
-    // Mescla arrays de objetos baseados no ID, Timestamp e Tombstones (Exclusões)
+    // Mescla arrays considerando Timestamp (_updatedAt) e Tombstones (Exclusões)
     mergeArrays(localArr = [], cloudArr = [], tombstones = []) {
         const mergedMap = new Map();
 
-        // 1. Processar Nuvem (Adicionar se não estiver na lista de excluídos)
+        // 1. Adiciona itens da nuvem (se não estiverem excluídos)
         cloudArr.forEach(item => {
             if (!tombstones.some(t => t.id === item.id)) {
                 mergedMap.set(item.id, item);
             }
         });
 
-        // 2. Processar Local (Adicionar ou Sobrescrever se for mais recente)
+        // 2. Processa itens locais (Conflito: Vence o mais recente)
         localArr.forEach(item => {
+            // Se o item está na lista de excluídos, remove do mapa
             if (tombstones.some(t => t.id === item.id)) {
-                mergedMap.delete(item.id); // Garante exclusão
+                mergedMap.delete(item.id);
             } else {
                 const cloudItem = mergedMap.get(item.id);
                 // Se não existe na nuvem OU Local é mais recente (timestamp maior)
@@ -74,20 +96,20 @@ const SyncEngine = {
         if (!cloudRecord) return localRecord;
         if (!localRecord) return cloudRecord;
 
-        // Garante estrutura de tombstones (registro de IDs excluídos)
+        // Unifica a lista de Tombstones (IDs excluídos)
         const localTomb = localRecord.tombstones || [];
         const cloudTomb = cloudRecord.tombstones || [];
         
-        // Remove duplicatas dos tombstones unificando as listas
+        // Cria lista única de exclusões (baseado no ID)
         const uniqueTombstones = [...new Map([...localTomb, ...cloudTomb].map(item => [item.id, item])).values()];
 
         const mergedRecord = {
             ...localRecord,
-            ...cloudRecord, // Pega propriedades primitivas da nuvem por padrão
+            ...cloudRecord,
             tombstones: uniqueTombstones
         };
 
-        // Listas que precisam de merge inteligente (Array deep merge)
+        // Arrays que precisam de merge inteligente
         const arraysToMerge = ['products', 'services', 'clients', 'suppliers', 'transactions', 'rpas', 'appointments'];
 
         arraysToMerge.forEach(key => {
@@ -102,7 +124,7 @@ const SyncEngine = {
     }
 };
 
-// --- GESTOR DE DADOS HÍBRIDO ---
+// --- DATA MANAGER (PERSISTÊNCIA E SYNC) ---
 const DataManager = {
     dbName: 'MEI_DB_HYBRID',
     storeName: 'mei_data',
@@ -112,9 +134,8 @@ const DataManager = {
         return new Promise((resolve, reject) => {
             const req = indexedDB.open(this.dbName, 1);
             req.onupgradeneeded = (e) => {
-                const db = e.target.result;
-                if (!db.objectStoreNames.contains(this.storeName)) {
-                    db.createObjectStore(this.storeName);
+                if (!e.target.result.objectStoreNames.contains(this.storeName)) {
+                    e.target.result.createObjectStore(this.storeName);
                 }
             };
             req.onsuccess = () => resolve(req.result);
@@ -122,81 +143,77 @@ const DataManager = {
         });
     },
 
-    // Sincronização Inteligente Bidirecional (Smart Sync)
+    // Sincronização Inteligente
     async smartSync(localData) {
         if (!navigator.onLine || !firebaseConfig.apiKey || !localData.currentUser) {
-            return { success: false, error: "Offline ou não configurado" };
+            return { success: false, error: "Offline" };
         }
 
         try {
             const dbCloud = firebase.firestore();
-            const userRef = dbCloud.collection('users').doc(localData.currentUser.id);
+            const uid = localData.currentUser.id;
+            const userRef = dbCloud.collection('users').doc(uid);
             
-            // A. Buscar dados atuais da nuvem para merge
+            // 1. Busca dados da nuvem
             const docSnap = await userRef.get();
 
-            // Se não existe na nuvem, faz o upload inicial
+            // 2. Se não existir, faz upload inicial
             if (!docSnap.exists) {
                 await userRef.set(JSON.parse(JSON.stringify(localData)));
                 return { success: true, method: 'upload_init' };
             }
 
             const cloudData = docSnap.data();
-            const currentUserId = localData.currentUser.id;
             
-            // Garante estruturas
-            if (!localData.records[currentUserId]) localData.records[currentUserId] = createSeedData().records.placeholder_id;
-            if (!cloudData.records[currentUserId]) cloudData.records[currentUserId] = createSeedData().records.placeholder_id;
+            // Garante inicialização de objetos
+            if (!localData.records[uid]) localData.records[uid] = createSeedData().records.placeholder_id;
+            if (!cloudData.records[uid]) cloudData.records[uid] = createSeedData().records.placeholder_id;
 
-            // B. Realizar Merge Inteligente usando a SyncEngine
+            // 3. Realiza o Merge (Local + Cloud)
             const mergedRecord = SyncEngine.mergeUserRecords(
-                localData.records[currentUserId],
-                cloudData.records[currentUserId]
+                localData.records[uid],
+                cloudData.records[uid]
             );
             
-            // Atualiza o objeto principal com o merge
-            let finalDataToSave = JSON.parse(JSON.stringify(localData));
-            finalDataToSave.records[currentUserId] = mergedRecord;
+            // 4. Prepara objeto final
+            let finalData = JSON.parse(JSON.stringify(localData));
+            finalData.records[uid] = mergedRecord;
             
-            // Atualiza a memória da aplicação também
-            appData.records[currentUserId] = mergedRecord;
+            // 5. Atualiza Memória Local
+            appData.records[uid] = mergedRecord;
             
-            // C. Enviar Dados Mesclados de volta para Nuvem
-            await userRef.set(finalDataToSave);
+            // 6. Envia Merge para Nuvem
+            await userRef.set(finalData);
             
-            return { success: true, mergedData: finalDataToSave, method: 'merge' };
+            return { success: true, mergedData: finalData, method: 'merge' };
 
         } catch (e) {
-            console.error("Smart Sync Failed:", e);
-            let errorMsg = e.message;
-            if (e.code === 'permission-denied') errorMsg = "Sem permissão. Verifique login.";
-            return { success: false, error: errorMsg };
+            console.error("Sync Error:", e);
+            return { success: false, error: translateFirebaseError(e) };
         }
     },
 
-    // Salvar Localmente e Tentar Sync
+    // Salvar (Local + Tentativa de Sync)
     async save(data, isManualSync = false) {
         let saveStatus = { local: false, cloud: false, error: null };
 
-        // 1. Persistência Local Imediata
+        // 1. Salvar no IndexedDB (Prioridade Zero)
         try {
             const db = await this.initDB();
             const tx = db.transaction(this.storeName, 'readwrite');
             const sanitizedData = JSON.parse(JSON.stringify(data));
             tx.objectStore(this.storeName).put(sanitizedData, 'main_data');
-            // Backup legado
-            try { localStorage.setItem(DB_KEY, JSON.stringify(sanitizedData)); } catch(e) {}
+            try { localStorage.setItem(DB_KEY, JSON.stringify(sanitizedData)); } catch(e){}
             saveStatus.local = true;
         } catch(e) { 
-            console.error("Erro Crítico Local", e);
-            saveStatus.error = "Falha ao salvar no dispositivo.";
+            console.error("Local Save Error", e);
+            saveStatus.error = "Erro ao salvar no dispositivo.";
             if (isManualSync) showToast("Erro Crítico: Falha no disco!", "error");
             return saveStatus;
         }
 
-        // 2. Sincronização Nuvem
-        if (navigator.onLine && firebaseConfig.apiKey && firebase.apps.length && data.currentUser) {
-            
+        // 2. Tentar Sincronizar com Nuvem
+        if (navigator.onLine && isFirebaseReady && data.currentUser) {
             const syncResult = await this.smartSync(data);
             
             if (syncResult.success) {
@@ -204,33 +221,26 @@ const DataManager = {
                 this.updateSyncStatus(true);
                 saveStatus.cloud = true;
 
-                // Se houve merge (dados novos da nuvem vieram), precisamos salvar o merge localmente
+                // Se houve merge, salvar o resultado do merge localmente também
                 if (syncResult.mergedData) {
-                    // Atualiza referência global
                     Object.assign(appData, syncResult.mergedData);
-                    
-                    // Salva novamente no IndexDB o resultado do merge
                     try {
                         const db = await this.initDB();
                         const tx = db.transaction(this.storeName, 'readwrite');
                         tx.objectStore(this.storeName).put(JSON.parse(JSON.stringify(appData)), 'main_data');
                     } catch(e) {}
-
+                    
                     if (isManualSync) {
-                        showToast("Sincronização completa! Dados atualizados.", "success");
-                        // Recarrega a tela atual para refletir novos dados
-                        const activeNav = document.querySelector('.nav-item.active');
-                        if (activeNav) activeNav.click();
+                        showToast("Sincronização concluída com sucesso!", "success");
+                        refreshCurrentView(); // Atualiza a tela com novos dados
                     }
                 } else if (isManualSync) {
-                    showToast("Dados enviados para nuvem.", "success");
+                    showToast("Dados enviados para a nuvem.", "success");
                 }
-
             } else {
                 this.isDirty = true;
                 this.updateSyncStatus(false);
-                saveStatus.error = syncResult.error;
-                if (isManualSync) showToast(`Erro na Nuvem: ${syncResult.error}`, "error");
+                if (isManualSync) showToast(`Erro Nuvem: ${syncResult.error}`, "error");
             }
         } else {
             this.isDirty = true;
@@ -245,13 +255,13 @@ const DataManager = {
         let data = null;
         try {
             const db = await this.initDB();
-            data = await new Promise(resolve => {
+            data = await new Promise(r => {
                 const tx = db.transaction(this.storeName, 'readonly');
                 const req = tx.objectStore(this.storeName).get('main_data');
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => resolve(null);
+                req.onsuccess = () => r(req.result);
+                req.onerror = () => r(null);
             });
-        } catch(e) { console.warn("Erro IDB", e); }
+        } catch(e) {}
 
         if (!data) {
             const ls = localStorage.getItem(DB_KEY);
@@ -261,58 +271,51 @@ const DataManager = {
     },
 
     async forceSync(currentData) {
-        if (this.isDirty && currentData) {
-            showToast("Reconectado. Sincronizando...", "info");
+        if (this.isDirty && currentData && currentData.currentUser) {
+            showToast("Conexão detectada. Sincronizando...", "info");
             await this.save(currentData, true);
         } else {
-            this.updateSyncStatus(true);
+            this.updateSyncStatus(navigator.onLine);
         }
     },
 
     updateSyncStatus(isOnline) {
         const el = document.getElementById('sync-indicator');
-        const userNameDisplay = document.getElementById('user-name-display');
-        
+        const userDisplay = document.getElementById('user-name-display');
         if(el) {
-            if (isOnline) {
-                el.className = 'sync-status sync-online';
-                el.title = 'Sincronizado (Nuvem)';
-                if(userNameDisplay) userNameDisplay.style.color = 'inherit';
-            } else {
-                el.className = 'sync-status sync-offline';
-                el.title = 'Pendente Envio / Offline';
-                if(userNameDisplay) userNameDisplay.style.color = '#ca8a04';
-            }
+            el.className = isOnline ? 'sync-status sync-online' : 'sync-status sync-offline';
+            el.title = isOnline ? 'Sincronizado' : 'Offline / Pendente';
+            if(userDisplay) userDisplay.style.color = isOnline ? 'inherit' : '#ca8a04';
         }
     }
 };
 
-// --- INICIALIZAÇÃO FIREBASE E OBSERVERS ---
-let appData = { currentUser: null, users: [], records: {}, irrfTable: [] };
+// --- INITIALIZAÇÃO ---
 
+// Init Firebase
 if (firebaseConfig.apiKey) {
     try {
         firebase.initializeApp(firebaseConfig);
-        
-        // OBSERVER DE AUTENTICAÇÃO
-        // Isso é crucial: Mantém a sessão e permite reconexão automática
+        isFirebaseReady = true;
+
+        // AUTH OBSERVER: Gerencia sessão e recarregamento
         firebase.auth().onAuthStateChanged((user) => {
             if (user && !appData.currentUser) {
-                // Se o Firebase detectou usuário logado, mas o appData está vazio
-                // 1. Carregar dados locais primeiro para ter a base
+                // Usuário está logado no Firebase, mas appData está vazio (F5 na página)
                 DataManager.load().then(localData => {
                     if (localData) appData = localData;
                     
-                    const uid = 'u_' + user.uid;
+                    const uid = 'u_' + user.uid; // Prefixo para compatibilidade
+                    
                     let appUser = {
                         id: uid,
                         name: user.displayName || user.email.split('@')[0],
                         email: user.email,
-                        licenseExpire: new Date().getTime() + (90 * 86400000),
+                        licenseExpire: Date.now() + (90 * 86400000),
                         company: { reserve_rate: 10, prolabore_target: 4000 }
                     };
-                    
-                    // Preserva configs locais se existirem
+
+                    // Recupera user local para não perder configurações
                     if (appData.users) {
                         const existing = appData.users.find(u => u.id === uid);
                         if (existing) appUser = existing;
@@ -324,109 +327,102 @@ if (firebaseConfig.apiKey) {
                 });
             }
         });
-        
-    } catch(e) { console.error("Firebase Init Error", e); }
+        console.log("Firebase OK");
+    } catch(e) {
+        console.error("Firebase Init Fail", e);
+        showToast("Erro na configuração do Firebase", "error");
+    }
 }
-
-const DEFAULT_IRRF = [
-    { id: 'irrf_1', max: 2259.20, rate: 0, deduction: 0 },
-    { id: 'irrf_2', max: 2826.65, rate: 7.5, deduction: 169.44 },
-    { id: 'irrf_3', max: 3751.05, rate: 15, deduction: 381.44 },
-    { id: 'irrf_4', max: 4664.68, rate: 22.5, deduction: 662.77 },
-    { id: 'irrf_5', max: 99999999, rate: 27.5, deduction: 896.00 }
-];
-
-let currentCrudType = 'products'; 
-let currentListingType = 'clients';
-let currentFinanceFilter = 'all';
 
 async function init() {
     window.addEventListener('online', () => DataManager.forceSync(appData));
-    window.addEventListener('offline', () => {
-        DataManager.updateSyncStatus(false);
-        showToast("Modo Offline Ativado", "info");
-    });
+    window.addEventListener('offline', () => { DataManager.updateSyncStatus(false); showToast("Modo Offline", "info"); });
 
     const loadedData = await DataManager.load();
     if (loadedData) appData = loadedData;
     
-    if (!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
-    
-    // Check de sessão básico visual, o AuthObserver fará o login real
+    if (!appData.irrfTable || !appData.irrfTable.length) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
+
+    // Verifica sessão local visualmente (Auth Observer fará o login real)
     const sessionUser = sessionStorage.getItem('mei_user_id');
-    if (sessionUser && appData.currentUser) {
-        // Já está carregado na memória
-        navTo('dashboard');
-    } else {
+    if (!sessionUser) {
         showAuth();
     }
 }
 
 function showAuth() { document.getElementById('auth-screen').classList.remove('hidden'); document.getElementById('app-container').classList.add('hidden'); }
 
-// HELPER: Marcação de Timestamp e Exclusão (Tombstone)
-function stampObject(obj) {
-    obj._updatedAt = Date.now();
-    return obj;
-}
-
-function registerDeletion(id) {
-    if (!appData.currentUser) return;
-    const rec = appData.records[appData.currentUser.id];
-    if (!rec.tombstones) rec.tombstones = [];
-    rec.tombstones.push({ id: id, deletedAt: Date.now() });
-}
-
-async function loginUser(user) {
-    appData.currentUser = user; 
-    sessionStorage.setItem('mei_user_id', user.id);
-    
-    document.getElementById('auth-screen').classList.add('hidden');
-    document.getElementById('app-container').classList.remove('hidden');
-    document.getElementById('user-name-display').innerText = user.name;
-    
-    if(!appData.records[user.id]) {
-        appData.records[user.id] = createSeedData().records.placeholder_id;
-        // Limpa dados dummy para novos usuários reais
-        appData.records[user.id].products = []; 
-    }
-    
-    // Garante arrays essenciais
-    ['tombstones', 'appointments', 'rpas', 'transactions', 'clients', 'suppliers', 'products', 'services'].forEach(key => {
-        if(!appData.records[user.id][key]) appData.records[user.id][key] = [];
-    });
-    
-    checkLicense(); 
-    navTo('dashboard'); 
-    loadFiscalReminders();
-    
-    DataManager.updateSyncStatus(navigator.onLine);
-    // Dispara Sync Inicial
-    saveData(); 
-}
-
-function logout() { 
-    firebase.auth().signOut().then(() => {
-        appData.currentUser = null; 
-        sessionStorage.removeItem('mei_user_id'); 
-        location.reload(); 
-    });
-}
-
 function toggleAuth(screen) {
     document.getElementById('login-form').classList.toggle('hidden', screen === 'register');
     document.getElementById('register-form').classList.toggle('hidden', screen !== 'register');
 }
 
-// LOGIN E REGISTRO COM FIREBASE AUTH (CORREÇÃO DE PERMISSÃO)
+// --- HELPER FUNCTIONS (DATA MODELS) ---
+
+function createSeedData() {
+    const now = Date.now();
+    return {
+        records: {
+            placeholder_id: {
+                products: [{id: 'p_ex', name: 'Produto Exemplo', price: 100, _updatedAt: now}], 
+                services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointments: [], tombstones: []
+            }
+        }
+    };
+}
+
+// Adiciona Timestamp de atualização ao objeto
+function stampObject(obj) {
+    obj._updatedAt = Date.now();
+    return obj;
+}
+
+// Registra exclusão para o Sync (Tombstone)
+function registerDeletion(id) {
+    if (!appData.currentUser) return;
+    const uid = appData.currentUser.id;
+    if (!appData.records[uid]) return;
+    
+    if (!appData.records[uid].tombstones) appData.records[uid].tombstones = [];
+    appData.records[uid].tombstones.push({ id: id, deletedAt: Date.now() });
+}
+
+function refreshCurrentView() {
+    const activeNav = document.querySelector('.nav-item.active');
+    if (activeNav) activeNav.click();
+}
+
+// --- AUTENTICAÇÃO E LOGIN ---
+
+// Login
+document.getElementById('login-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!isFirebaseReady) return showToast("Firebase não configurado.", "error");
+
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+
+    showToast("Entrando...", "info");
+
+    firebase.auth().signInWithEmailAndPassword(email, password)
+    .then((userCredential) => {
+        // Observer cuidará do resto, mas podemos acelerar
+        const uid = 'u_' + userCredential.user.uid;
+        const localUser = (appData.users || []).find(u => u.id === uid);
+        if (localUser) loginUser(localUser);
+    })
+    .catch((error) => showToast(translateFirebaseError(error), "error"));
+});
 
 // Registro
 document.getElementById('register-form').addEventListener('submit', (e) => {
     e.preventDefault();
+    if (!isFirebaseReady) return showToast("Firebase não configurado.", "error");
+
     const email = document.getElementById('reg-email').value;
     const password = document.getElementById('reg-password').value;
     const name = document.getElementById('reg-name').value;
-
+    
     showToast("Criando conta...", "info");
 
     firebase.auth().createUserWithEmailAndPassword(email, password)
@@ -435,76 +431,64 @@ document.getElementById('register-form').addEventListener('submit', (e) => {
         user.updateProfile({ displayName: name });
         
         const newUser = {
-            id: 'u_' + user.uid, 
-            name: name, 
-            email: email,
-            licenseExpire: new Date().getTime() + (90 * 86400000),
+            id: 'u_' + user.uid,
+            name: name, email: email,
+            licenseExpire: Date.now() + (90 * 86400000),
             company: { reserve_rate: 10, prolabore_target: 4000 }
         };
-        
+
         if (!appData.users) appData.users = [];
-        appData.users.push(newUser); 
-        
-        // Seed
+        appData.users.push(newUser);
         appData.records[newUser.id] = createSeedData().records.placeholder_id;
-        appData.records[newUser.id].products = []; // Limpa dummy
+        appData.records[newUser.id].products = []; // Limpa dummy data
 
         loginUser(newUser);
-        showToast("Conta criada com sucesso!", "success");
+        showToast("Bem-vindo!", "success");
     })
-    .catch((error) => {
-        showToast("Erro ao criar conta: " + error.message, "error");
-    });
-});
-
-// Login
-document.getElementById('login-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const email = document.getElementById('login-email').value;
-    const password = document.getElementById('login-password').value;
-
-    showToast("Autenticando...", "info");
-
-    firebase.auth().signInWithEmailAndPassword(email, password)
-    .then((userCredential) => {
-        // O Observer onAuthStateChanged vai cuidar da lógica de carregar dados
-        // mas podemos agilizar se já tivermos os dados locais
-        const uid = 'u_' + userCredential.user.uid;
-        const localUser = appData.users.find(u => u.id === uid);
-        if (localUser) loginUser(localUser);
-    })
-    .catch((error) => {
-        showToast("Erro no login: " + error.message, "error");
-    });
+    .catch((error) => showToast(translateFirebaseError(error), "error"));
 });
 
 function handleGoogleLogin() {
-    if (!firebaseConfig.apiKey) { alert('Configure o Firebase!'); return; }
+    if (!isFirebaseReady) return showToast("Firebase não configurado.", "error");
     const provider = new firebase.auth.GoogleAuthProvider();
-    firebase.auth().signInWithPopup(provider).then((result) => {
-        // Deixa o Observer cuidar
-        const user = result.user;
-        const uid = 'u_' + user.uid;
-        if (!appData.records[uid]) {
-             appData.records[uid] = createSeedData().records.placeholder_id;
-        }
-    }).catch((error) => {
-        showToast("Erro Google: " + error.message, "error");
-    });
+    firebase.auth().signInWithPopup(provider).catch(e => showToast(translateFirebaseError(e), "error"));
 }
 
-function createSeedData() {
-    const now = Date.now();
-    // Seed com timestamps para compatibilidade
-    return {
-        records: {
-            placeholder_id: {
-                products: [{id: 'p_ex', name: 'Produto Exemplo', price: 100.00, _updatedAt: now}], 
-                services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointments: [], tombstones: []
-            }
-        }
-    };
+async function loginUser(user) {
+    appData.currentUser = user; 
+    sessionStorage.setItem('mei_user_id', user.id);
+    
+    // Garante estrutura de dados
+    if(!appData.records[user.id]) {
+        appData.records[user.id] = createSeedData().records.placeholder_id;
+        appData.records[user.id].products = [];
+    }
+    
+    // Garante arrays críticos
+    ['tombstones', 'appointments', 'rpas', 'transactions', 'clients', 'suppliers', 'products', 'services'].forEach(k => {
+        if(!appData.records[user.id][k]) appData.records[user.id][k] = [];
+    });
+
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('app-container').classList.remove('hidden');
+    document.getElementById('user-name-display').innerText = user.name;
+    
+    checkLicense(); 
+    navTo('dashboard'); 
+    loadFiscalReminders();
+    
+    DataManager.updateSyncStatus(navigator.onLine);
+    saveData(); // Sync Inicial
 }
+
+function logout() { 
+    if(isFirebaseReady) firebase.auth().signOut();
+    appData.currentUser = null; 
+    sessionStorage.removeItem('mei_user_id'); 
+    location.reload(); 
+}
+
+// --- NAVEGAÇÃO E VIEWS ---
 
 function navTo(viewId) {
     document.querySelectorAll('main section').forEach(el => el.classList.add('hidden'));
@@ -518,110 +502,26 @@ function navTo(viewId) {
     if(viewId === 'financeiro') renderTransactions();
     if(viewId === 'cadastros') renderCrud(currentCrudType);
     if(viewId === 'agenda') renderAgenda();
-    if(viewId === 'fiscal') {
-        renderIrrf();
-        const comp = appData.currentUser.company || {};
-        document.getElementById('link-emissor').href = comp.url_fiscal || DEFAULT_URL_FISCAL;
-        document.getElementById('link-das').href = comp.url_das || DEFAULT_URL_DAS;
-    }
+    if(viewId === 'fiscal') renderIrrf();
     if(viewId === 'configuracoes') loadSettings();
     if(viewId === 'rpa') loadRPAOptions();
 }
 
-function loadSettings() {
-    const c = appData.currentUser.company || {};
-    document.getElementById('conf-company-name').value = c.name||''; 
-    document.getElementById('conf-cnpj').value = c.cnpj||''; 
-    document.getElementById('conf-address').value = c.address||''; 
-    document.getElementById('conf-phone').value = c.phone||''; 
-    document.getElementById('conf-whatsapp').value = c.whatsapp||'';
-    document.getElementById('conf-url-fiscal').value = c.url_fiscal || DEFAULT_URL_FISCAL;
-    document.getElementById('conf-url-das').value = c.url_das || DEFAULT_URL_DAS;
-    document.getElementById('conf-reserve-rate').value = c.reserve_rate || 10;
-    document.getElementById('conf-prolabore-target').value = c.prolabore_target || 4000;
+// --- FUNCIONALIDADES (CRUD, AGENDA, FINANCEIRO) ---
 
-    const adminDiv = document.getElementById('admin-tools');
-    if (appData.currentUser.email === 'jcnvap@gmail.com') {
-        adminDiv.classList.remove('hidden');
-    } else {
-        adminDiv.classList.add('hidden');
-    }
-}
+function getUserData() { return appData.records[appData.currentUser.id]; }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
-function adminFillData() {
-    if (appData.currentUser.email !== 'jcnvap@gmail.com') return;
-    if (!confirm('ATENÇÃO: Dados fictícios. Continuar?')) return;
-
-    const today = new Date();
-    const formatDate = (date) => date.toISOString().split('T')[0];
-    const ts = Date.now();
-    
-    appData.currentUser.company = {
-        name: "Empresa Modelo Tech Ltda", cnpj: "12.345.678/0001-90",
-        address: "Av. Paulista, 1000", phone: "(11) 98765-4321", whatsapp: "(11) 98765-4321",
-        role: "both", url_fiscal: DEFAULT_URL_FISCAL, url_das: DEFAULT_URL_DAS,
-        reserve_rate: 15, prolabore_target: 5000
-    };
-
-    const rec = appData.records[appData.currentUser.id];
-    
-    rec.clients = [
-        {id: 'c1', name: 'Supermercado Silva', phone: '(11) 91111-1111', _updatedAt: ts},
-        {id: 'c2', name: 'Padaria Central', phone: '(11) 92222-2222', _updatedAt: ts}
-    ];
-
-    rec.transactions = [];
-    for(let i=0; i<10; i++) {
-        rec.transactions.push({
-            id: 't_admin_'+i, type: Math.random()>0.5?'receita':'despesa',
-            category: 'Geral', value: 100, date: formatDate(today), obs: 'Auto', _updatedAt: ts
-        });
-    }
-
-    saveData();
-    showToast('Dados gerados!', 'success');
-    location.reload(); 
-}
-
-function adminClearData() {
-    if (appData.currentUser.email !== 'jcnvap@gmail.com') return;
-    if (!confirm('Limpar tudo?')) return;
-
-    appData.records[appData.currentUser.id] = {
-        products: [], services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointments: [], tombstones: []
-    };
-    
-    saveData();
-    showToast('Limpo.', 'info');
-    location.reload();
-}
-
-function saveCompanyData(e) {
-    e.preventDefault();
-    const companyData = {
-        name: document.getElementById('conf-company-name').value,
-        cnpj: document.getElementById('conf-cnpj').value,
-        address: document.getElementById('conf-address').value,
-        phone: document.getElementById('conf-phone').value,
-        whatsapp: document.getElementById('conf-whatsapp').value,
-        role: document.getElementById('conf-role').value,
-        url_fiscal: document.getElementById('conf-url-fiscal').value,
-        url_das: document.getElementById('conf-url-das').value,
-        reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
-        prolabore_target: parseFloat(document.getElementById('conf-prolabore-target').value)
-    };
-    appData.currentUser.company = companyData;
-    saveData(); 
-    showToast('Configurações salvas!', 'success');
-}
-
+// Dashboard
 function updateDashboard() {
-    const t = getUserData().transactions; 
+    const t = getUserData().transactions || []; 
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
     const reserveRate = appData.currentUser.company?.reserve_rate || 10;
     const prolaboreTarget = appData.currentUser.company?.prolabore_target || 4000;
+    
     let income = 0; let expense = 0; let totalReserve = 0; let totalProlabore = 0;
+    
     t.forEach(x => {
         const d = new Date(x.date);
         const isCurrentMonth = d.getMonth() === currentMonth && d.getFullYear() === currentYear;
@@ -636,6 +536,7 @@ function updateDashboard() {
             }
         } else { if (isCurrentMonth) expense += x.value; }
     });
+    
     document.getElementById('dash-income').innerText = `R$ ${income.toFixed(2)}`;
     document.getElementById('dash-expense').innerText = `R$ ${expense.toFixed(2)}`;
     document.getElementById('dash-balance').innerText = `R$ ${(income-expense).toFixed(2)}`;
@@ -645,9 +546,11 @@ function updateDashboard() {
     document.getElementById('dash-prolabore-target').innerText = `Meta: R$ ${prolaboreTarget.toFixed(2)}`;
 }
 
+// Agenda
 function renderAgenda(filter = '') {
-    if(!getUserData().appointments) getUserData().appointments = [];
-    let list = getUserData().appointments.sort((a,b) => new Date(a.date+'T'+a.time) - new Date(b.date+'T'+b.time));
+    const listData = getUserData().appointments || [];
+    let list = listData.sort((a,b) => new Date(a.date+'T'+a.time) - new Date(b.date+'T'+b.time));
+    
     if (filter === 'today') {
         const today = new Date().toISOString().split('T')[0];
         list = list.filter(a => a.date === today);
@@ -655,10 +558,17 @@ function renderAgenda(filter = '') {
         const inputDate = document.getElementById('agenda-filter-date').value;
         if(inputDate) list = list.filter(a => a.date === inputDate);
     }
+    
     const container = document.getElementById('agenda-list');
     container.innerHTML = '';
-    if (list.length === 0) { container.innerHTML = '<p class="text-center p-4" style="grid-column: 1/-1;">Nenhum agendamento encontrado.</p>'; return; }
+    
+    if (list.length === 0) { 
+        container.innerHTML = '<p class="text-center p-4" style="grid-column: 1/-1;">Nenhum agendamento encontrado.</p>'; 
+        return; 
+    }
+    
     const statusMap = { 'agendado': { label: 'Agendado', class: 'bg-scheduled', card: 'status-agendado' }, 'concluido': { label: 'Concluído', class: 'bg-done', card: 'status-concluido' }, 'cancelado': { label: 'Cancelado', class: 'bg-canceled', card: 'status-cancelado' } };
+    
     list.forEach(a => {
         const st = statusMap[a.status] || statusMap['agendado'];
         const formattedDate = a.date.split('-').reverse().join('/');
@@ -680,8 +590,9 @@ function renderAgenda(filter = '') {
 function openAppointmentModal(appt = null) {
     document.getElementById('form-appointment').reset();
     const clientSelect = document.getElementById('appt-client-select');
-    clientSelect.innerHTML = '<option value="">Selecionar Cliente Cadastrado...</option>';
-    getUserData().clients.forEach(c => { clientSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`; });
+    clientSelect.innerHTML = '<option value="">Selecionar Cliente...</option>';
+    (getUserData().clients || []).forEach(c => { clientSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`; });
+    
     if (appt) {
         document.getElementById('appt-id').value = appt.id;
         document.getElementById('appt-title').value = appt.title;
@@ -725,14 +636,16 @@ function saveAppointment(e) {
         pay_status: document.getElementById('appt-pay-status').value,
         obs: document.getElementById('appt-obs').value
     });
+    
     const list = getUserData().appointments;
     if (id) { const idx = list.findIndex(x => x.id === id); if(idx !== -1) list[idx] = data; } else { list.push(data); }
+    
     saveData(); closeModal('modal-appointment'); renderAgenda(); showToast('Agendamento salvo!', 'success');
 }
 
 function editAppointment(id) { const appt = getUserData().appointments.find(a => a.id === id); if(appt) openAppointmentModal(appt); }
 function deleteAppointment(id) { 
-    if(confirm('Excluir este agendamento?')) { 
+    if(confirm('Excluir?')) { 
         registerDeletion(id);
         const list = getUserData().appointments; const idx = list.findIndex(a => a.id === id); 
         if(idx !== -1) list.splice(idx, 1); 
@@ -740,6 +653,100 @@ function deleteAppointment(id) {
     } 
 }
 
+// Financeiro
+function renderTransactions(){ 
+    let l = (getUserData().transactions || []).sort((a,b)=>new Date(b.date)-new Date(a.date)); 
+    if (currentFinanceFilter !== 'all') { l = l.filter(t => t.type === currentFinanceFilter); }
+    document.querySelector('#finance-table tbody').innerHTML = l.length > 0 ? 
+        l.map(t=>`<tr><td>${t.date}</td><td>${t.type}</td><td>${t.category}</td><td>${t.obs||'-'}</td><td>R$ ${t.value}</td><td><button onclick="editTransaction('${t.id}')">✏️</button><button onclick="deleteTransaction('${t.id}')">🗑️</button></td></tr>`).join('') :
+        '<tr><td colspan="6" class="text-center p-4">Nenhuma movimentação encontrada.</td></tr>';
+}
+
+function editTransaction(id){ 
+    const t=getUserData().transactions.find(x=>x.id===id); 
+    document.getElementById('trans-id').value=t.id; 
+    document.getElementById('trans-type').value=t.type; 
+    updateTransactionDependencies(); 
+    document.getElementById('trans-category').value=t.category; 
+    document.getElementById('trans-entity').value=t.entity; 
+    document.getElementById('trans-value').value=t.value; 
+    document.getElementById('trans-date').value=t.date; 
+    document.getElementById('trans-obs').value=t.obs; 
+    document.getElementById('modal-transaction').classList.remove('hidden'); 
+}
+
+function saveTransaction(e){ 
+    e.preventDefault(); 
+    const id=document.getElementById('trans-id').value; 
+    const t = stampObject({
+        id: id||'t_'+Date.now(), type:document.getElementById('trans-type').value, 
+        category:document.getElementById('trans-category').value, value:parseFloat(document.getElementById('trans-value').value), 
+        date:document.getElementById('trans-date').value, obs:document.getElementById('trans-obs').value, 
+        entity:document.getElementById('trans-entity').value
+    }); 
+    const l=getUserData().transactions; const i=l.findIndex(x=>x.id===t.id); i!==-1?l[i]=t:l.push(t); 
+    saveData(); closeModal('modal-transaction'); renderTransactions(); showToast('Transação salva.', 'success'); 
+}
+
+function deleteTransaction(id){ 
+    if(confirm('Apagar?')){
+        registerDeletion(id);
+        const l=getUserData().transactions; l.splice(l.findIndex(x=>x.id===id),1); 
+        saveData(); renderTransactions();
+    } 
+}
+
+function updateTransactionDependencies(){
+    const type = document.getElementById('trans-type').value;
+    const cats = type==='receita'?['Venda','Serviço','Outros']:['Compra','Despesa','Imposto', 'Gastos Pessoais']; 
+    document.getElementById('trans-category').innerHTML=cats.map(c=>`<option>${c}</option>`).join('');
+    const select = document.getElementById('trans-entity');
+    const list = type === 'receita' ? getUserData().clients : getUserData().suppliers;
+    if (list && list.length > 0) { select.innerHTML = '<option value="">Selecione...</option>' + list.map(i => `<option value="${i.name}">${i.name}</option>`).join(''); } else { select.innerHTML = '<option value="">Sem cadastros disponíveis</option>'; }
+}
+
+function openTransactionModal(){ 
+    document.getElementById('form-transaction').reset(); 
+    document.getElementById('trans-id').value=''; 
+    document.getElementById('modal-transaction').classList.remove('hidden'); 
+    updateTransactionDependencies(); 
+}
+
+function filterFinance(filter) {
+    currentFinanceFilter = filter;
+    document.querySelectorAll('.fin-filter-btn').forEach(btn => { btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${filter}'`)); });
+    renderTransactions();
+}
+
+// Cadastros (CRUD)
+function renderCrud(type) { 
+    currentCrudType = type; 
+    document.getElementById('crud-title').innerText = type.toUpperCase(); 
+    document.querySelectorAll('.crud-btn').forEach(btn => { btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${type}'`)); });
+    const list = getUserData()[type] || []; 
+    const table = document.getElementById('crud-table'); 
+    let h = type.match(/products|services/) ? '<th>Nome</th><th>Desc</th><th>Preço</th>' : '<th>Nome</th><th>Contato</th><th>Info</th>'; 
+    table.innerHTML = `<thead><tr>${h}<th>Ações</th></tr></thead><tbody>` + list.map(i => `<tr><td>${i.name}</td><td>${i.description || i.contact_person || '-'}</td><td>${i.price ? 'R$ '+i.price : i.phone}</td><td><button class="action-btn btn-warning" onclick="editCrudItem('${i.id}')">✏️</button> <button class="action-btn btn-danger" onclick="deleteCrudItem('${type}','${i.id}')">🗑️</button></td></tr>`).join('') + `</tbody>`; 
+}
+
+function openCrudModal(isEdit = false, itemData = null) { document.getElementById('modal-crud').classList.remove('hidden'); document.getElementById('crud-id').value = itemData ? itemData.id : ''; const fields = document.getElementById('crud-fields'); if(currentCrudType.match(/products|services/)) { fields.innerHTML = `<label>Nome</label><input name="name" value="${itemData?.name||''}" required><label>Preço</label><input type="number" step="0.01" name="price" value="${itemData?.price||''}" required><label>Descrição</label><textarea name="description" rows="3">${itemData?.description||''}</textarea>`; } else { fields.innerHTML = `<label>Nome/Razão</label><input name="name" value="${itemData?.name||''}" required><label>Contato</label><input name="contact_person" value="${itemData?.contact_person||''}"><label>CPF/CNPJ</label><input name="cnpj_cpf" value="${itemData?.cnpj_cpf||''}"><label>Endereço</label><input name="address" value="${itemData?.address||''}"><label>Telefone</label><input name="phone" value="${itemData?.phone||''}"><label>Email</label><input name="email" value="${itemData?.email||''}">`; } }
+function editCrudItem(id) { const item = getUserData()[currentCrudType].find(i => i.id === id); if (item) openCrudModal(true, item); }
+function saveCrudItem(e) { 
+    e.preventDefault(); 
+    const id = document.getElementById('crud-id').value; const t = e.target; 
+    const item = stampObject({ id: id || 'i_'+Date.now(), name: t.name.value, price: t.price?.value, description: t.description?.value, contact_person: t.contact_person?.value, phone: t.phone?.value, address: t.address?.value, cnpj_cpf: t.cnpj_cpf?.value, email: t.email?.value }); 
+    const list = getUserData()[currentCrudType]; const idx = list.findIndex(i => i.id === id); idx !== -1 ? list[idx] = item : list.push(item); 
+    saveData(); closeModal('modal-crud'); renderCrud(currentCrudType); showToast('Item salvo.', 'success'); 
+}
+function deleteCrudItem(t,id){ 
+    if(confirm('Apagar?')){
+        registerDeletion(id);
+        const l=getUserData()[t]; l.splice(l.findIndex(x=>x.id===id),1); 
+        saveData(); renderCrud(t);
+    } 
+}
+
+// RPA
 function loadRPAOptions() {
     const comp = appData.currentUser.company || {};
     document.getElementById('rpa-comp-name').value = comp.name || '';
@@ -833,11 +840,65 @@ function loadRPA(id) {
 }
 
 function deleteRPA(id) { 
-    if(confirm('Excluir este RPA?')) { 
+    if(confirm('Excluir?')) { 
         registerDeletion(id);
         const l = getUserData().rpas; l.splice(l.findIndex(r => r.id === id), 1); 
         saveData(); toggleRPAHistory(); 
     } 
+}
+
+// Configurações e Fiscal
+function loadSettings() {
+    const c = appData.currentUser.company || {};
+    document.getElementById('conf-company-name').value = c.name||''; 
+    document.getElementById('conf-cnpj').value = c.cnpj||''; 
+    document.getElementById('conf-address').value = c.address||''; 
+    document.getElementById('conf-phone').value = c.phone||''; 
+    document.getElementById('conf-whatsapp').value = c.whatsapp||'';
+    document.getElementById('conf-url-fiscal').value = c.url_fiscal || DEFAULT_URL_FISCAL;
+    document.getElementById('conf-url-das').value = c.url_das || DEFAULT_URL_DAS;
+    document.getElementById('conf-reserve-rate').value = c.reserve_rate || 10;
+    document.getElementById('conf-prolabore-target').value = c.prolabore_target || 4000;
+
+    const adminDiv = document.getElementById('admin-tools');
+    if (appData.currentUser.email === 'jcnvap@gmail.com') {
+        adminDiv.classList.remove('hidden');
+    } else {
+        adminDiv.classList.add('hidden');
+    }
+}
+
+function saveCompanyData(e) {
+    e.preventDefault();
+    const companyData = {
+        name: document.getElementById('conf-company-name').value,
+        cnpj: document.getElementById('conf-cnpj').value,
+        address: document.getElementById('conf-address').value,
+        phone: document.getElementById('conf-phone').value,
+        whatsapp: document.getElementById('conf-whatsapp').value,
+        role: document.getElementById('conf-role').value,
+        url_fiscal: document.getElementById('conf-url-fiscal').value,
+        url_das: document.getElementById('conf-url-das').value,
+        reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
+        prolabore_target: parseFloat(document.getElementById('conf-prolabore-target').value)
+    };
+    appData.currentUser.company = companyData;
+    saveData(); 
+    showToast('Configurações salvas!', 'success');
+}
+
+function loadFiscalReminders(){ document.getElementById('fiscal-reminders').innerHTML='<li>DAS Dia 20</li>'; }
+function renderIrrf(){ document.getElementById('irrf-table-body').innerHTML=appData.irrfTable.map(r=>`<tr><td>${r.max}</td><td>${r.rate}</td><td>${r.deduction}</td><td><button class="action-btn btn-warning" onclick="editIrrfRow('${r.id}')">✏️</button><button class="action-btn btn-danger" onclick="deleteIrrfRow('${r.id}')">X</button></td></tr>`).join(''); }
+function deleteIrrfRow(id){ appData.irrfTable.splice(appData.irrfTable.findIndex(r=>r.id===id),1); saveData(); renderIrrf(); }
+function openIrrfModal(){ document.getElementById('form-irrf').reset(); document.getElementById('irrf-id').value = ''; document.getElementById('modal-irrf').classList.remove('hidden'); }
+function editIrrfRow(id) { const row = appData.irrfTable.find(r => r.id === id); if(row) { document.getElementById('irrf-id').value = row.id; document.getElementById('irrf-max').value = row.max; document.getElementById('irrf-rate').value = row.rate; document.getElementById('irrf-deduction').value = row.deduction; document.getElementById('modal-irrf').classList.remove('hidden'); } }
+function saveIrrfRow(e){ e.preventDefault(); const id = document.getElementById('irrf-id').value; const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target[3].value) }; if (id) { const idx = appData.irrfTable.findIndex(r => r.id === id); if (idx !== -1) appData.irrfTable[idx] = data; } else { appData.irrfTable.push(data); } saveData(); closeModal('modal-irrf'); renderIrrf(); showToast('Tabela IRRF salva.', 'success'); }
+
+// Listagens e Exports
+function switchListing(t){ 
+    currentListingType=t; 
+    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); if(b.getAttribute('onclick').includes(`'${t}'`)) b.classList.add('active'); });
+    document.getElementById('listing-thead').innerHTML=t==='movimentacoes'?'<tr><th>Data</th><th>Tipo</th><th>Valor</th></tr>':'<tr><th>Nome</th><th>Detalhe</th><th>Valor/Tel</th></tr>'; const d=t==='movimentacoes'?getUserData().transactions:getUserData()[t]; document.getElementById('listing-tbody').innerHTML=(d||[]).map(i=>t==='movimentacoes'?`<tr><td>${i.date}</td><td>${i.type}</td><td>${i.value}</td></tr>`:`<tr><td>${i.name}</td><td>${i.description||i.contact_person||'-'}</td><td>${i.price||i.phone||'-'}</td></tr>`).join(''); 
 }
 
 function prepareForExport(elementId) {
@@ -857,274 +918,70 @@ function prepareForExport(elementId) {
 function exportRPAPdf() {
     prepareForExport('rpa-content');
     const element = document.getElementById('rpa-content');
-    const opt = {
-        margin:       10,
-        filename:     'RPA.pdf',
-        image:        { type: 'jpeg', quality: 0.98 },
-        html2canvas:  { scale: 2 }, 
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
+    const opt = { margin: 10, filename: 'RPA.pdf', image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } };
     html2pdf().set(opt).from(element).save();
 }
 
 function exportRPADoc() {
     prepareForExport('rpa-content');
     const company = document.getElementById('rpa-comp-name').value;
-    const cnpj = document.getElementById('rpa-comp-cnpj').value;
-    const provName = document.getElementById('rpa-prov-name').value;
-    const provCpf = document.getElementById('rpa-prov-cpf').value;
-    const desc = document.getElementById('rpa-desc').value;
-    const date = document.getElementById('rpa-date').value;
-    const value = document.getElementById('rpa-value').value;
     const net = document.getElementById('rpa-net').value;
-
-    const htmlContent = `
-        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-        <head>
-            <meta charset='utf-8'>
-            <title>RPA</title>
-            <style>
-                body { font-family: 'Arial', sans-serif; font-size: 12pt; }
-                h2 { text-align: center; text-decoration: underline; }
-                p { margin: 5px 0; }
-                hr { border: 0; border-top: 1px solid #ccc; margin: 20px 0; }
-                .section { margin-bottom: 20px; border: 1px solid #eee; padding: 10px; }
-                .label { font-weight: bold; }
-            </style>
-        </head>
-        <body>
-            <h2>RECIBO DE PAGAMENTO A AUTÔNOMO (RPA)</h2>
-            <br>
-            <div class="section">
-                <h3>1. Contratante</h3>
-                <p><span class="label">Razão Social:</span> ${company}</p>
-                <p><span class="label">CNPJ:</span> ${cnpj}</p>
-            </div>
-            <div class="section">
-                <h3>2. Autônomo</h3>
-                <p><span class="label">Nome:</span> ${provName}</p>
-                <p><span class="label">CPF:</span> ${provCpf}</p>
-            </div>
-            <div class="section">
-                <h3>3. Serviço</h3>
-                <p><span class="label">Descrição:</span> ${desc}</p>
-                <p><span class="label">Data:</span> ${date}</p>
-            </div>
-            <div class="section">
-                <h3>4. Valores</h3>
-                <p><span class="label">Valor Bruto:</span> R$ ${value}</p>
-                <p><span class="label">Valor Líquido:</span> ${net}</p>
-            </div>
-            <br><br>
-            <p>Declaro que recebi o valor acima.</p>
-            <br><br>
-            <p>______________________________________</p>
-            <p>Assinatura do Prestador</p>
-        </body>
-        </html>`;
-    
-    const blob = new Blob([htmlContent], { type: 'application/msword' });
+    const blob = new Blob([`<html><body><h2>RPA</h2><p>Empresa: ${company}</p><p>Líquido: ${net}</p></body></html>`], { type: 'application/msword' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'RPA.doc';
-    a.click();
+    const a = document.createElement('a'); a.href = url; a.download = 'RPA.doc'; a.click();
 }
 
 function exportReportPDF() {
     document.getElementById('report-company-header').innerText = appData.currentUser.company.name || "Minha Empresa";
     document.getElementById('report-title').classList.remove('hidden');
     const element = document.getElementById('report-print-area');
-    const opt = {
-        margin:       10,
-        filename:     'Relatorio.pdf',
-        image:        { type: 'jpeg', quality: 0.98 },
-        html2canvas:  { scale: 2 },
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' } 
-    };
-    html2pdf().set(opt).from(element).save().then(() => {
-         document.getElementById('report-title').classList.add('hidden');
-    });
+    html2pdf().from(element).save().then(() => document.getElementById('report-title').classList.add('hidden'));
 }
 
 function exportReportDoc() {
-    const header = `<h2 style="text-align:center">${appData.currentUser.company.name || "Minha Empresa"}</h2>`;
     const table = document.getElementById('listing-table').outerHTML;
-    const html = `
-        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-        <head>
-            <meta charset='utf-8'>
-            <title>Relatório</title>
-            <style>
-                body { font-family: 'Arial', sans-serif; }
-                table { width: 100%; border-collapse: collapse; }
-                th, td { border: 1px solid #000; padding: 5px; text-align: left; }
-                th { background-color: #f0f0f0; }
-            </style>
-        </head>
-        <body>
-            ${header}
-            <h3 style="text-align:center">Relatório do Sistema</h3>
-            <br>
-            ${table}
-        </body>
-        </html>`;
-    const blob = new Blob([html], { type: 'application/msword' });
+    const blob = new Blob([`<html><body>${table}</body></html>`], { type: 'application/msword' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Relatorio.doc`;
-    a.click();
+    const a = document.createElement('a'); a.href = url; a.download = `Relatorio.doc`; a.click();
 }
 
-function renderCrud(type) { 
-    currentCrudType = type; 
-    document.getElementById('crud-title').innerText = type.toUpperCase(); 
-    document.querySelectorAll('.crud-btn').forEach(btn => { btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${type}'`)); });
-    const list = getUserData()[type] || []; 
-    const table = document.getElementById('crud-table'); 
-    let h = type.match(/products|services/) ? '<th>Nome</th><th>Desc</th><th>Preço</th>' : '<th>Nome</th><th>Contato</th><th>Info</th>'; 
-    table.innerHTML = `<thead><tr>${h}<th>Ações</th></tr></thead><tbody>` + list.map(i => `<tr><td>${i.name}</td><td>${i.description || i.contact_person || '-'}</td><td>${i.price ? 'R$ '+i.price : i.phone}</td><td><button class="action-btn btn-warning" onclick="editCrudItem('${i.id}')">✏️</button> <button class="action-btn btn-danger" onclick="deleteCrudItem('${type}','${i.id}')">🗑️</button></td></tr>`).join('') + `</tbody>`; 
-}
-
-function openCrudModal(isEdit = false, itemData = null) { document.getElementById('modal-crud').classList.remove('hidden'); document.getElementById('crud-id').value = itemData ? itemData.id : ''; const fields = document.getElementById('crud-fields'); if(currentCrudType.match(/products|services/)) { fields.innerHTML = `<label>Nome</label><input name="name" value="${itemData?.name||''}" required><label>Preço</label><input type="number" step="0.01" name="price" value="${itemData?.price||''}" required><label>Descrição</label><textarea name="description" rows="3">${itemData?.description||''}</textarea>`; } else { fields.innerHTML = `<label>Nome/Razão</label><input name="name" value="${itemData?.name||''}" required><label>Contato</label><input name="contact_person" value="${itemData?.contact_person||''}"><label>CPF/CNPJ</label><input name="cnpj_cpf" value="${itemData?.cnpj_cpf||''}"><label>Endereço</label><input name="address" value="${itemData?.address||''}"><label>Telefone</label><input name="phone" value="${itemData?.phone||''}"><label>Email</label><input name="email" value="${itemData?.email||''}">`; } }
-function editCrudItem(id) { const item = getUserData()[currentCrudType].find(i => i.id === id); if (item) openCrudModal(true, item); }
-function saveCrudItem(e) { 
-    e.preventDefault(); const id = document.getElementById('crud-id').value; const t = e.target; 
-    const item = stampObject({ id: id || 'i_'+Date.now(), name: t.name.value, price: t.price?.value, description: t.description?.value, contact_person: t.contact_person?.value, phone: t.phone?.value, address: t.address?.value, cnpj_cpf: t.cnpj_cpf?.value, email: t.email?.value }); 
-    const list = getUserData()[currentCrudType]; const idx = list.findIndex(i => i.id === id); idx !== -1 ? list[idx] = item : list.push(item); 
-    saveData(); closeModal('modal-crud'); renderCrud(currentCrudType); showToast('Item salvo.', 'success'); 
-}
-function deleteCrudItem(t,id){ 
-    if(confirm('Apagar?')){
-        registerDeletion(id);
-        const l=getUserData()[t]; l.splice(l.findIndex(x=>x.id===id),1); 
-        saveData(); renderCrud(t);
-    } 
-}
-function getUserData() { return appData.records[appData.currentUser.id]; }
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+// Licença e Admin
 function checkLicense() { const d = Math.ceil((appData.currentUser.licenseExpire - Date.now())/86400000); document.getElementById('license-days-display').innerText = d>0?d+' dias':'Expirado'; document.getElementById('license-warning').classList.toggle('hidden', d>0); }
 function generateLicenseCode() { document.getElementById('license-random-code').value = Math.floor(Math.random()*900)+100; }
-
-function sendWhatsApp() { 
-    const code = document.getElementById('license-random-code').value;
-    const days = document.getElementById('license-days-input').value;
-    window.open(`https://wa.me/5534997824990?text=Cod:${code} Dias:${days}`); 
-}
-
+function sendWhatsApp() { window.open(`https://wa.me/5534997824990?text=Cod:${document.getElementById('license-random-code').value}`); }
 function validateLicense() { 
     const k = parseInt(document.getElementById('license-key-input').value);
     const c = parseInt(document.getElementById('license-random-code').value);
     const d = parseInt(document.getElementById('license-days-input').value); 
-    
     if(k === (c + LIC_PAD_VAL) * LIC_MULT_FACTOR + LIC_YEAR_BASE + d){
         appData.currentUser.licenseExpire += d * 86400000;
-        saveData();
-        checkLicense();
-        showToast('Licença validada!', 'success');
-    } else {
-        showToast('Código inválido.', 'error');
-    }
+        saveData(); checkLicense(); showToast('Licença validada!', 'success');
+    } else { showToast('Código inválido.', 'error'); }
 }
 
-function filterFinance(filter) {
-    currentFinanceFilter = filter;
-    document.querySelectorAll('.fin-filter-btn').forEach(btn => { btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${filter}'`)); });
-    renderTransactions();
+function adminFillData() {
+    if (appData.currentUser.email !== 'jcnvap@gmail.com') return;
+    if (!confirm('ATENÇÃO: Dados fictícios. Continuar?')) return;
+    const ts = Date.now();
+    appData.records[appData.currentUser.id].clients = [{id: 'c1', name: 'Cliente Teste Sync', _updatedAt: ts}];
+    saveData();
+    showToast('Dados gerados!', 'success');
+    location.reload(); 
 }
 
-function renderTransactions(){ 
-    let l = (getUserData().transactions || []).sort((a,b)=>new Date(b.date)-new Date(a.date)); 
-    if (currentFinanceFilter !== 'all') { l = l.filter(t => t.type === currentFinanceFilter); }
-    document.querySelector('#finance-table tbody').innerHTML = l.length > 0 ? 
-        l.map(t=>`<tr><td>${t.date}</td><td>${t.type}</td><td>${t.category}</td><td>${t.obs||'-'}</td><td>R$ ${t.value}</td><td><button onclick="editTransaction('${t.id}')">✏️</button><button onclick="deleteTransaction('${t.id}')">🗑️</button></td></tr>`).join('') :
-        '<tr><td colspan="6" class="text-center p-4">Nenhuma movimentação encontrada.</td></tr>';
+function adminClearData() {
+    if (appData.currentUser.email !== 'jcnvap@gmail.com') return;
+    if (!confirm('Limpar tudo?')) return;
+    appData.records[appData.currentUser.id] = createSeedData().records.placeholder_id;
+    appData.records[appData.currentUser.id].products = [];
+    saveData();
+    showToast('Resetado.', 'info');
+    location.reload();
 }
 
-function editTransaction(id){ 
-    const t=getUserData().transactions.find(x=>x.id===id); 
-    document.getElementById('trans-id').value=t.id; 
-    document.getElementById('trans-type').value=t.type; 
-    updateTransactionDependencies(); 
-    document.getElementById('trans-category').value=t.category; 
-    document.getElementById('trans-entity').value=t.entity; 
-    document.getElementById('trans-value').value=t.value; 
-    document.getElementById('trans-date').value=t.date; 
-    document.getElementById('trans-obs').value=t.obs; 
-    document.getElementById('modal-transaction').classList.remove('hidden'); 
-}
-
-function saveTransaction(e){ e.preventDefault(); const id=document.getElementById('trans-id').value; 
-    const t= stampObject({id:id||'t_'+Date.now(), type:document.getElementById('trans-type').value, category:document.getElementById('trans-category').value, value:parseFloat(document.getElementById('trans-value').value), date:document.getElementById('trans-date').value, obs:document.getElementById('trans-obs').value, entity:document.getElementById('trans-entity').value}); 
-    const l=getUserData().transactions; const i=l.findIndex(x=>x.id===t.id); i!==-1?l[i]=t:l.push(t); 
-    saveData(); closeModal('modal-transaction'); renderTransactions(); showToast('Transação salva.', 'success'); 
-}
-function deleteTransaction(id){ 
-    if(confirm('Apagar?')){
-        registerDeletion(id);
-        const l=getUserData().transactions; l.splice(l.findIndex(x=>x.id===id),1); 
-        saveData(); renderTransactions();
-    } 
-}
-
-function updateTransactionDependencies(){
-    const type = document.getElementById('trans-type').value;
-    const cats = type==='receita'?['Venda','Serviço','Outros']:['Compra','Despesa','Imposto', 'Gastos Pessoais']; 
-    document.getElementById('trans-category').innerHTML=cats.map(c=>`<option>${c}</option>`).join('');
-    const select = document.getElementById('trans-entity');
-    const list = type === 'receita' ? getUserData().clients : getUserData().suppliers;
-    if (list && list.length > 0) { select.innerHTML = '<option value="">Selecione...</option>' + list.map(i => `<option value="${i.name}">${i.name}</option>`).join(''); } else { select.innerHTML = '<option value="">Sem cadastros disponíveis</option>'; }
-}
-
-function openTransactionModal(){ 
-    document.getElementById('form-transaction').reset(); 
-    document.getElementById('trans-id').value=''; 
-    document.getElementById('modal-transaction').classList.remove('hidden'); 
-    updateTransactionDependencies(); 
-}
-
-function switchListing(t){ 
-    currentListingType=t; 
-    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); if(b.getAttribute('onclick').includes(`'${t}'`)) b.classList.add('active'); });
-    document.getElementById('listing-thead').innerHTML=t==='movimentacoes'?'<tr><th>Data</th><th>Tipo</th><th>Valor</th></tr>':'<tr><th>Nome</th><th>Detalhe</th><th>Valor/Tel</th></tr>'; const d=t==='movimentacoes'?getUserData().transactions:getUserData()[t]; document.getElementById('listing-tbody').innerHTML=(d||[]).map(i=>t==='movimentacoes'?`<tr><td>${i.date}</td><td>${i.type}</td><td>${i.value}</td></tr>`:`<tr><td>${i.name}</td><td>${i.description||i.contact_person||'-'}</td><td>${i.price||i.phone||'-'}</td></tr>`).join(''); 
-}
-
-function loadFiscalReminders(){ document.getElementById('fiscal-reminders').innerHTML='<li>DAS Dia 20</li>'; }
 function downloadBackup(){ saveData(); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(appData)],{type:'json'})); a.download='backup.json'; a.click(); }
 function restoreBackup(i){ const r=new FileReader(); r.onload=e=>{appData=JSON.parse(e.target.result);saveData();location.reload();}; r.readAsText(i.files[0]); }
+function triggerManualSync() { DataManager.forceSync(appData); }
 
-function renderIrrf(){ document.getElementById('irrf-table-body').innerHTML=appData.irrfTable.map(r=>`<tr><td>${r.max}</td><td>${r.rate}</td><td>${r.deduction}</td><td><button class="action-btn btn-warning" onclick="editIrrfRow('${r.id}')">✏️</button><button class="action-btn btn-danger" onclick="deleteIrrfRow('${r.id}')">X</button></td></tr>`).join(''); }
-function deleteIrrfRow(id){ appData.irrfTable.splice(appData.irrfTable.findIndex(r=>r.id===id),1); saveData(); renderIrrf(); }
-function openIrrfModal(){ document.getElementById('form-irrf').reset(); document.getElementById('irrf-id').value = ''; document.getElementById('modal-irrf').classList.remove('hidden'); }
-function editIrrfRow(id) { const row = appData.irrfTable.find(r => r.id === id); if(row) { document.getElementById('irrf-id').value = row.id; document.getElementById('irrf-max').value = row.max; document.getElementById('irrf-rate').value = row.rate; document.getElementById('irrf-deduction').value = row.deduction; document.getElementById('modal-irrf').classList.remove('hidden'); } }
-function saveIrrfRow(e){ e.preventDefault(); const id = document.getElementById('irrf-id').value; const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target[3].value) }; if (id) { const idx = appData.irrfTable.findIndex(r => r.id === id); if (idx !== -1) appData.irrfTable[idx] = data; } else { appData.irrfTable.push(data); } saveData(); closeModal('modal-irrf'); renderIrrf(); showToast('Tabela IRRF salva.', 'success'); }
-
-// --- MANUAL SYNC TRIGGER ---
-async function triggerManualSync() {
-    const btn = document.getElementById('btn-manual-sync');
-    const originalText = btn.innerHTML;
-
-    if (!navigator.onLine) {
-        showToast("Você está Offline. Dados salvos apenas localmente.", "info");
-    }
-
-    btn.innerHTML = '⏳ Sincronizando...';
-    btn.disabled = true;
-
-    try {
-        await DataManager.forceSync(appData);
-        setTimeout(() => {
-            btn.innerHTML = originalText;
-            btn.disabled = false;
-        }, 1000);
-    } catch (e) {
-        showToast('Erro crítico ao tentar sincronizar.', 'error');
-        console.error(e);
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    }
-}
-
-// INICIALIZA O APP
+// INICIA O APP
 init();
