@@ -10,9 +10,12 @@ const LIC_YEAR_BASE = 1954;
 
 // Configuração Firebase (Adicione suas chaves aqui)
 const firebaseConfig = {
-    // apiKey: "...",
-    // authDomain: "...",
-    // projectId: "...",
+  apiKey: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo",
+  authDomain: "projeto-bfed3.firebaseapp.com",
+  projectId: "projeto-bfed3",
+  storageBucket: "projeto-bfed3.firebasestorage.app",
+  messagingSenderId: "785289237066",
+  appId: "1:785289237066:web:11fdd8f617a65911d5ccb3"
 };
 
 // --- GESTOR DE DADOS HÍBRIDO (REGRA DE OPERAÇÃO CRUD) ---
@@ -35,22 +38,28 @@ const DataManager = {
         });
     },
 
-    // A REGRA CENTRAL DE CRUD HÍBRIDO
+    // A REGRA CENTRAL DE CRUD HÍBRIDO (CORRIGIDA)
     async save(data) {
         // 1. Persistência Local Obrigatória (IndexedDB)
         try {
             const db = await this.initDB();
             const tx = db.transaction(this.storeName, 'readwrite');
-            tx.objectStore(this.storeName).put(data, 'main_data');
+            // Sanitiza os dados para evitar erros de clonagem em objetos complexos
+            const sanitizedData = JSON.parse(JSON.stringify(data));
+            tx.objectStore(this.storeName).put(sanitizedData, 'main_data');
             // Backup legado
-            try { localStorage.setItem(DB_KEY, JSON.stringify(data)); } catch(e) {}
+            try { localStorage.setItem(DB_KEY, JSON.stringify(sanitizedData)); } catch(e) {}
         } catch(e) { console.error("Erro Crítico ao Salvar Localmente", e); }
 
         // 2. Tentativa de Sincronização em Nuvem (Firebase)
-        if (navigator.onLine && firebase.apps.length && data.currentUser) {
+        // Correção: Validação de Config e Sanitização
+        if (navigator.onLine && firebaseConfig.apiKey && firebase.apps.length && data.currentUser) {
             try {
                 const dbCloud = firebase.firestore();
-                await dbCloud.collection('users').doc(data.currentUser.id).set(data);
+                // Sanitização crítica para o Firestore (remove undefined e functions)
+                const payload = JSON.parse(JSON.stringify(data));
+                
+                await dbCloud.collection('users').doc(data.currentUser.id).set(payload);
                 this.isDirty = false;
                 this.updateSyncStatus(true);
                 console.log("Dados Sincronizados com a Nuvem.");
@@ -66,9 +75,9 @@ const DataManager = {
         }
     },
 
+    // Carregamento local
     async load() {
         let data = null;
-        // Prioridade: IndexedDB
         try {
             const db = await this.initDB();
             data = await new Promise(resolve => {
@@ -79,18 +88,26 @@ const DataManager = {
             });
         } catch(e) { console.warn("Erro ao carregar IDB", e); }
 
-        // Fallback: LocalStorage
         if (!data) {
             const ls = localStorage.getItem(DB_KEY);
             if (ls) data = JSON.parse(ls);
         }
-
-        // Fallback: Nuvem (se não tiver nada local e estiver online)
-        if (!data && navigator.onLine && firebase.apps.length) {
-           // Lógica de recuperação de nuvem seria implementada no login
-        }
-
         return data;
+    },
+
+    // Recuperação da Nuvem (Sync Bidirecional)
+    async loadCloudData(userId) {
+        if (navigator.onLine && firebaseConfig.apiKey && firebase.apps.length) {
+            try {
+                const dbCloud = firebase.firestore();
+                const doc = await dbCloud.collection('users').doc(userId).get();
+                if (doc.exists) {
+                    console.log("Backup encontrado na nuvem.");
+                    return doc.data();
+                }
+            } catch(e) { console.error("Erro ao buscar backup na nuvem:", e); }
+        }
+        return null;
     },
 
     // Função chamada automaticamente quando a internet volta
@@ -140,11 +157,9 @@ let currentListingType = 'clients';
 let currentFinanceFilter = 'all';
 
 async function init() {
-    // Listeners de Rede para Regra Híbrida
     window.addEventListener('online', () => DataManager.forceSync(appData));
     window.addEventListener('offline', () => DataManager.updateSyncStatus(false));
 
-    // Carregamento Inicial
     const loadedData = await DataManager.load();
     if (loadedData) appData = loadedData;
     
@@ -160,24 +175,49 @@ async function init() {
 
 function showAuth() { document.getElementById('auth-screen').classList.remove('hidden'); document.getElementById('app-container').classList.add('hidden'); }
 
-// Função Central de Salvamento (Async)
 async function saveData() { 
     await DataManager.save(appData); 
 }
 
-function loginUser(user) {
-    appData.currentUser = user; sessionStorage.setItem('mei_user_id', user.id);
+// CORREÇÃO: Sync Bidirecional no Login
+async function loginUser(user) {
+    // 1. Tenta recuperar backup da nuvem se os dados locais estiverem vazios para este usuário
+    // ou se o usuário não existir no appData local (ex: novo dispositivo)
+    const localUserRecord = appData.records[user.id];
+    
+    if (!localUserRecord && navigator.onLine) {
+        const cloudData = await DataManager.loadCloudData(user.id);
+        if (cloudData) {
+            // Merge cuidadoso ou substituição total (Opção: Substituição total para consistência de backup)
+            appData = cloudData;
+            // Atualiza a referência do usuário para o objeto que veio da nuvem
+            user = appData.users.find(u => u.id === user.id) || user;
+            console.log("Dados restaurados da nuvem.");
+        }
+    }
+
+    appData.currentUser = user; 
+    sessionStorage.setItem('mei_user_id', user.id);
+    
     document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('app-container').classList.remove('hidden');
     document.getElementById('user-name-display').innerText = user.name;
+    
+    // Garante estrutura mínima
+    if(!appData.records[user.id]) {
+        // Se ainda não tem registros (nem local nem nuvem), cria seed limpo
+        // Isso evita erros de undefined ao tentar acessar records[user.id]
+        appData.records[user.id] = createSeedData().records[user.id] || { 
+            products: [], services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointments: [] 
+        };
+    }
     
     if(!appData.records[user.id].appointments) appData.records[user.id].appointments = [];
     
     checkLicense(); navTo('dashboard'); loadFiscalReminders();
     
-    // Sync status check
     DataManager.updateSyncStatus(navigator.onLine);
-    saveData(); // Garante sync inicial se online
+    saveData(); // Salva localmente o que acabou de ser carregado (ou criado)
 }
 
 function logout() { appData.currentUser = null; sessionStorage.removeItem('mei_user_id'); location.reload(); }
@@ -206,7 +246,8 @@ function handleGoogleLogin() {
                 company: { reserve_rate: 10, prolabore_target: 4000 }
             };
             appData.users.push(appUser);
-            appData.records[appUser.id] = createSeedData();
+            // Inicializa records vazio, será preenchido pelo loadCloudData ou createSeedData no loginUser
+            appData.records[appUser.id] = createSeedData().records[appUser.id]; 
         }
         loginUser(appUser);
     }).catch((error) => {
@@ -215,21 +256,29 @@ function handleGoogleLogin() {
 }
 
 function createSeedData() {
+    // Retorna estrutura completa para uso inicial
     const today = new Date().toISOString().split('T')[0];
-    return { 
-        products: [{id: 'p_ex', name: 'Produto Exemplo A', price: 100.00, description: 'Produto para teste'}], 
-        services: [{id: 's_ex', name: 'Serviço Exemplo B', price: 200.00, description: 'Serviço para teste'}], 
-        clients: [{id: 'c_ex', name: 'Cliente Teste', phone: '(11) 99999-9999', address: 'Rua Exemplo, 100', cnpj_cpf: '000.000.000-00', contact_person: 'João', email: 'cliente@teste.com'}], 
-        suppliers: [{id: 'f_ex', name: 'Fornecedor Teste', phone: '(11) 88888-8888', address: 'Av Exemplo, 200', cnpj_cpf: '00.000.000/0001-00', contact_person: 'Maria', email: 'fornecedor@teste.com'}], 
-        transactions: [
-            {id: 't_ex1', type: 'receita', category: 'Venda de produto', value: 150.00, date: today, obs: 'Venda inicial de teste', entity: 'Cliente Teste'},
-            {id: 't_ex2', type: 'despesa', category: 'Despesas Operacionais', value: 50.00, date: today, obs: 'Despesa inicial de teste', entity: 'Fornecedor Teste'}
-        ], 
-        rpas: [],
-        appointments: []
+    // OBS: Ajustado para retornar estrutura compatível com a lógica de records[id]
+    // Mas aqui retornamos o objeto "records" simulado para extração
+    return {
+        records: {
+            placeholder_id: {
+                products: [{id: 'p_ex', name: 'Produto Exemplo A', price: 100.00, description: 'Produto para teste'}], 
+                services: [{id: 's_ex', name: 'Serviço Exemplo B', price: 200.00, description: 'Serviço para teste'}], 
+                clients: [{id: 'c_ex', name: 'Cliente Teste', phone: '(11) 99999-9999', address: 'Rua Exemplo, 100', cnpj_cpf: '000.000.000-00', contact_person: 'João', email: 'cliente@teste.com'}], 
+                suppliers: [{id: 'f_ex', name: 'Fornecedor Teste', phone: '(11) 88888-8888', address: 'Av Exemplo, 200', cnpj_cpf: '00.000.000/0001-00', contact_person: 'Maria', email: 'fornecedor@teste.com'}], 
+                transactions: [
+                    {id: 't_ex1', type: 'receita', category: 'Venda de produto', value: 150.00, date: today, obs: 'Venda inicial de teste', entity: 'Cliente Teste'},
+                    {id: 't_ex2', type: 'despesa', category: 'Despesas Operacionais', value: 50.00, date: today, obs: 'Despesa inicial de teste', entity: 'Fornecedor Teste'}
+                ], 
+                rpas: [],
+                appointments: []
+            }
+        }
     };
 }
 
+// Registro Manual corrigido para usar Seed
 document.getElementById('register-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const email = document.getElementById('reg-email').value;
@@ -242,7 +291,10 @@ document.getElementById('register-form').addEventListener('submit', (e) => {
         company: { reserve_rate: 10, prolabore_target: 4000 }
     };
     appData.users.push(newUser); 
-    appData.records[newUser.id] = createSeedData();
+    
+    // Seed Manual
+    const seed = createSeedData().records.placeholder_id;
+    appData.records[newUser.id] = seed;
     
     saveData(); loginUser(newUser);
 });
@@ -287,7 +339,6 @@ function loadSettings() {
     document.getElementById('conf-reserve-rate').value = c.reserve_rate || 10;
     document.getElementById('conf-prolabore-target').value = c.prolabore_target || 4000;
 
-    // ADMIN TOOLS CHECK
     const adminDiv = document.getElementById('admin-tools');
     if (appData.currentUser.email === 'jcnvap@gmail.com') {
         adminDiv.classList.remove('hidden');
@@ -296,7 +347,6 @@ function loadSettings() {
     }
 }
 
-// ADMIN FUNCTIONS (Somente jcnvap@gmail.com)
 function adminFillData() {
     if (appData.currentUser.email !== 'jcnvap@gmail.com') return;
     if (!confirm('ATENÇÃO: Isso preencherá o sistema com dados fictícios para teste. Continuar?')) return;
@@ -304,7 +354,6 @@ function adminFillData() {
     const today = new Date();
     const formatDate = (date) => date.toISOString().split('T')[0];
     
-    // 1. Dados da Empresa
     appData.currentUser.company = {
         name: "Empresa Modelo Tech Ltda",
         cnpj: "12.345.678/0001-90",
@@ -320,7 +369,6 @@ function adminFillData() {
 
     const rec = appData.records[appData.currentUser.id];
     
-    // 2. Clientes
     rec.clients = [
         {id: 'c1', name: 'Supermercado Silva', phone: '(11) 91111-1111', address: 'Rua A, 1', cnpj_cpf: '11.111.111/0001-11', contact_person: 'Sr. Silva', email: 'silva@email.com'},
         {id: 'c2', name: 'Padaria Central', phone: '(11) 92222-2222', address: 'Rua B, 2', cnpj_cpf: '22.222.222/0001-22', contact_person: 'Maria', email: 'maria@email.com'},
@@ -329,14 +377,12 @@ function adminFillData() {
         {id: 'c5', name: 'Escola Futuro', phone: '(11) 95555-5555', address: 'Rua E, 5', cnpj_cpf: '55.555.555/0001-55', contact_person: 'Diretora Ana', email: 'ana@email.com'}
     ];
 
-    // 3. Fornecedores
     rec.suppliers = [
         {id: 's1', name: 'Distribuidora Tech', phone: '(11) 81111-1111', address: 'Av Ind, 100', cnpj_cpf: '66.666.666/0001-66', contact_person: 'Roberto', email: 'vendas@tech.com'},
         {id: 's2', name: 'Papelaria Atacado', phone: '(11) 82222-2222', address: 'Av Com, 200', cnpj_cpf: '77.777.777/0001-77', contact_person: 'Julia', email: 'julia@papel.com'},
         {id: 's3', name: 'Internet Provider', phone: '(11) 0800-0000', address: 'Web', cnpj_cpf: '88.888.888/0001-88', contact_person: 'Suporte', email: 'suporte@net.com'}
     ];
 
-    // 4. Produtos & Serviços
     rec.products = [
         {id: 'p1', name: 'Mouse Sem Fio', price: 45.90, description: 'Mouse óptico genérico'},
         {id: 'p2', name: 'Teclado Mecânico', price: 150.00, description: 'Teclado RGB'},
@@ -350,14 +396,12 @@ function adminFillData() {
         {id: 'sv3', name: 'Consultoria TI', price: 100.00, description: 'Valor hora'}
     ];
 
-    // 5. Transações (Gerar histórico para gráficos)
     rec.transactions = [];
     const catsIn = ['Venda', 'Serviço', 'Outros'];
     const catsOut = ['Compra', 'Despesa', 'Imposto', 'Gastos Pessoais'];
     
-    // Gerar 20 transações aleatórias nos últimos 60 dias
     for(let i=0; i<25; i++) {
-        const isReceita = Math.random() > 0.4; // 60% chance receita
+        const isReceita = Math.random() > 0.4;
         const pastDate = new Date();
         pastDate.setDate(today.getDate() - Math.floor(Math.random() * 60));
         
@@ -372,7 +416,6 @@ function adminFillData() {
         });
     }
 
-    // 6. Agenda (Compromissos)
     rec.appointments = [
         {id: 'apt1', title: 'Manutenção Servidor', date: formatDate(today), time: '14:00', client_name: 'Escola Futuro', service_desc: 'Verificar lentidão', value: 300, status: 'agendado', pay_status: 'pendente', pay_method: 'pix'},
         {id: 'apt2', title: 'Entrega Equipamento', date: formatDate(new Date(today.getTime() + 86400000)), time: '10:00', client_name: 'Supermercado Silva', service_desc: 'Entrega monitor', value: 800, status: 'agendado', pay_status: 'pago', pay_method: 'cartao'},
@@ -381,7 +424,7 @@ function adminFillData() {
 
     saveData();
     alert('Dados de teste gerados com sucesso! O painel foi atualizado.');
-    location.reload(); // Recarrega para garantir atualização total das views
+    location.reload(); 
 }
 
 function adminClearData() {
@@ -392,7 +435,6 @@ function adminClearData() {
         products: [], services: [], clients: [], suppliers: [], transactions: [], rpas: [], appointments: []
     };
     
-    // Reseta configurações básicas da empresa, mantendo apenas o essencial para não quebrar
     appData.currentUser.company = {
         name: "", cnpj: "", address: "", phone: "", whatsapp: "", role: "both",
         url_fiscal: DEFAULT_URL_FISCAL, url_das: DEFAULT_URL_DAS,
@@ -654,10 +696,8 @@ function deleteRPA(id) { if(confirm('Excluir este RPA?')) { const l = getUserDat
 
 // --- HELPERS PARA EXPORTAÇÃO DE DOCUMENTOS (PDF Alta Qualidade e DOCX) ---
 
-// Função auxiliar para preparar o DOM (copia valores de inputs para atributos HTML visíveis)
 function prepareForExport(elementId) {
     const element = document.getElementById(elementId);
-    // Copia valores de inputs para o atributo 'value' para que apareçam no PDF/HTML
     const inputs = element.querySelectorAll('input, select, textarea');
     inputs.forEach(input => {
         if(input.tagName === 'SELECT') {
@@ -673,23 +713,18 @@ function prepareForExport(elementId) {
 function exportRPAPdf() {
     prepareForExport('rpa-content');
     const element = document.getElementById('rpa-content');
-    
-    // Configurações para Alta Qualidade (300dpi, A4)
     const opt = {
         margin:       10,
         filename:     'RPA.pdf',
         image:        { type: 'jpeg', quality: 0.98 },
-        html2canvas:  { scale: 2 }, // Aumenta resolução
+        html2canvas:  { scale: 2 }, 
         jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
-
     html2pdf().set(opt).from(element).save();
 }
 
 function exportRPADoc() {
     prepareForExport('rpa-content');
-    
-    // Captura os valores atuais pois inputs HTML puros não levam o texto digitado
     const company = document.getElementById('rpa-comp-name').value;
     const cnpj = document.getElementById('rpa-comp-cnpj').value;
     const provName = document.getElementById('rpa-prov-name').value;
@@ -699,7 +734,6 @@ function exportRPADoc() {
     const value = document.getElementById('rpa-value').value;
     const net = document.getElementById('rpa-net').value;
 
-    // Cria um HTML limpo para o Word, garantindo compatibilidade
     const htmlContent = `
         <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
         <head>
@@ -756,18 +790,14 @@ function exportRPADoc() {
 function exportReportPDF() {
     document.getElementById('report-company-header').innerText = appData.currentUser.company.name || "Minha Empresa";
     document.getElementById('report-title').classList.remove('hidden');
-    
-    // Mostra área de relatório, esconde o resto temporariamente
     const element = document.getElementById('report-print-area');
-    
     const opt = {
         margin:       10,
         filename:     'Relatorio.pdf',
         image:        { type: 'jpeg', quality: 0.98 },
         html2canvas:  { scale: 2 },
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' } // Landscape para tabelas
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' } 
     };
-
     html2pdf().set(opt).from(element).save().then(() => {
          document.getElementById('report-title').classList.add('hidden');
     });
@@ -776,7 +806,6 @@ function exportReportPDF() {
 function exportReportDoc() {
     const header = `<h2 style="text-align:center">${appData.currentUser.company.name || "Minha Empresa"}</h2>`;
     const table = document.getElementById('listing-table').outerHTML;
-    
     const html = `
         <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
         <head>
@@ -796,7 +825,6 @@ function exportReportDoc() {
             ${table}
         </body>
         </html>`;
-        
     const blob = new Blob([html], { type: 'application/msword' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -906,5 +934,35 @@ function deleteIrrfRow(id){ appData.irrfTable.splice(appData.irrfTable.findIndex
 function openIrrfModal(){ document.getElementById('form-irrf').reset(); document.getElementById('irrf-id').value = ''; document.getElementById('modal-irrf').classList.remove('hidden'); }
 function editIrrfRow(id) { const row = appData.irrfTable.find(r => r.id === id); if(row) { document.getElementById('irrf-id').value = row.id; document.getElementById('irrf-max').value = row.max; document.getElementById('irrf-rate').value = row.rate; document.getElementById('irrf-deduction').value = row.deduction; document.getElementById('modal-irrf').classList.remove('hidden'); } }
 function saveIrrfRow(e){ e.preventDefault(); const id = document.getElementById('irrf-id').value; const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target[3].value) }; if (id) { const idx = appData.irrfTable.findIndex(r => r.id === id); if (idx !== -1) appData.irrfTable[idx] = data; } else { appData.irrfTable.push(data); } saveData(); closeModal('modal-irrf'); renderIrrf(); }
+
+// --- MANUAL SYNC TRIGGER ---
+async function triggerManualSync() {
+    const btn = document.getElementById('btn-manual-sync');
+    const originalText = btn.innerHTML;
+
+    if (!navigator.onLine) {
+        alert('Você está Offline. Os dados serão salvos localmente e sincronizados quando a conexão retornar.');
+    }
+
+    btn.innerHTML = '⏳ Sincronizando...';
+    btn.disabled = true;
+
+    try {
+        await saveData(); 
+        setTimeout(() => {
+            btn.innerHTML = '✅ Concluído!';
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }, 1500);
+        }, 500);
+        
+    } catch (e) {
+        alert('Erro ao sincronizar. Verifique sua conexão.');
+        console.error(e);
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
 
 init();

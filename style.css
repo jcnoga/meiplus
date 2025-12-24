@@ -12,8 +12,6 @@
     --border: #e5e7eb;
     --input-bg: #e0f2fe; 
     --input-border: #93c5fd;
-    
-    /* Status Colors for Agenda */
     --st-scheduled: #3b82f6;
     --st-done: #22c55e;
     --st-canceled: #ef4444;
@@ -190,8 +188,6 @@ tr:hover { background-color: #f9fafb; }
     .rpa-paper { border: none; padding: 0; width: 100%; max-width: none; }
     input, select { border: none; background: transparent; padding: 0; font-weight: bold; }
     section:not(.active-print) { display: none !important; }
-    
-    /* Remove sombras e ajusta cores para impressão nítida */
     * { box-shadow: none !important; text-shadow: none !important; }
     a { text-decoration: none; color: #000; }
 }
