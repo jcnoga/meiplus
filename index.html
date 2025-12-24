@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!-- 
-    GESTOR MEI - VERSÃO V11.6 (HÍBRIDO & DOCUMENTOS HD) - ESTRUTURA
+    GESTOR MEI - VERSÃO V11.7 (HÍBRIDO, DOCS HD & SYNC MANUAL) - ESTRUTURA
     
     ARQUIVOS INTEGRANTES:
     1. index.html (Estrutura)
@@ -11,7 +11,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor MEI - Sistema Híbrido V11.6</title>
+    <title>Gestor MEI - Sistema Híbrido V11.7</title>
     
     <!-- FIREBASE SDK (Compatibilidade Híbrida) -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
@@ -71,6 +71,12 @@
                     <span id="user-name-display">Usuário</span>
                 </p>
                 <p id="license-days-display" class="text-success text-sm">Licença Ativa</p>
+                
+                <!-- BOTÃO DE SINCRONIZAÇÃO MANUAL -->
+                <button id="btn-manual-sync" onclick="triggerManualSync()" class="btn-info text-sm mt-2 w-full" style="padding: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 5px;">
+                    🔄 Sincronizar
+                </button>
+
                 <button onclick="logout()" class="text-danger text-sm mt-2 w-full text-left" style="background: rgba(220, 38, 38, 0.1); border-radius: 4px; padding: 0.5rem; text-align: center;">🚪 Sair / Logout</button>
             </div>
         </aside>
