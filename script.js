@@ -9,7 +9,6 @@ const LIC_MULT_FACTOR = 9;
 const LIC_YEAR_BASE = 1954;
 
 // --- CONFIGURAÇÃO FIREBASE ---
-// Certifique-se de que o Authentication (Email/Senha e Google) e Firestore estão ativos no console.
 const firebaseConfig = {
   apiKey: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo",
   authDomain: "projeto-bfed3.firebaseapp.com",
@@ -57,7 +56,7 @@ function translateFirebaseError(error) {
     if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') return "E-mail ou senha incorretos.";
     if (error.code === 'auth/email-already-in-use') return "Este e-mail já está em uso.";
     if (error.code === 'auth/network-request-failed') return "Sem conexão com a internet.";
-    if (error.code === 'permission-denied') return "Permissão negada. Tente sair e entrar novamente.";
+    if (error.code === 'permission-denied') return "Permissão negada. Verifique as Regras no Console.";
     return error.message;
 }
 
@@ -76,7 +75,6 @@ const SyncEngine = {
 
         // 2. Processa itens locais (Conflito: Vence o mais recente)
         localArr.forEach(item => {
-            // Se o item está na lista de excluídos, remove do mapa
             if (tombstones.some(t => t.id === item.id)) {
                 mergedMap.delete(item.id);
             } else {
@@ -96,7 +94,6 @@ const SyncEngine = {
         if (!cloudRecord) return localRecord;
         if (!localRecord) return cloudRecord;
 
-        // Unifica a lista de Tombstones (IDs excluídos)
         const localTomb = localRecord.tombstones || [];
         const cloudTomb = cloudRecord.tombstones || [];
         
@@ -109,7 +106,6 @@ const SyncEngine = {
             tombstones: uniqueTombstones
         };
 
-        // Arrays que precisam de merge inteligente
         const arraysToMerge = ['products', 'services', 'clients', 'suppliers', 'transactions', 'rpas', 'appointments'];
 
         arraysToMerge.forEach(key => {
@@ -145,9 +141,10 @@ const DataManager = {
 
     // Sincronização Inteligente
     async smartSync(localData) {
-        if (!navigator.onLine || !firebaseConfig.apiKey || !localData.currentUser) {
-            return { success: false, error: "Offline" };
-        }
+        // Validação estrita
+        if (!navigator.onLine) return { success: false, error: "Offline" };
+        if (!firebaseConfig.apiKey) return { success: false, error: "Sem Configuração" };
+        if (!localData.currentUser) return { success: false, error: "Usuário não logado" };
 
         try {
             const dbCloud = firebase.firestore();
@@ -159,6 +156,7 @@ const DataManager = {
 
             // 2. Se não existir, faz upload inicial
             if (!docSnap.exists) {
+                console.log("Criando registro inicial na nuvem...");
                 await userRef.set(JSON.parse(JSON.stringify(localData)));
                 return { success: true, method: 'upload_init' };
             }
@@ -184,6 +182,7 @@ const DataManager = {
             
             // 6. Envia Merge para Nuvem
             await userRef.set(finalData);
+            console.log("Dados sincronizados com sucesso.");
             
             return { success: true, mergedData: finalData, method: 'merge' };
 
@@ -213,7 +212,12 @@ const DataManager = {
         }
 
         // 2. Tentar Sincronizar com Nuvem
+        // Se for sync manual, ignoramos checagem de "dirty" e forçamos o sync
         if (navigator.onLine && isFirebaseReady && data.currentUser) {
+            
+            // CORREÇÃO: Garante que o toast apareça antes do processo
+            if (isManualSync) showToast("Conectando à nuvem...", "info");
+
             const syncResult = await this.smartSync(data);
             
             if (syncResult.success) {
@@ -270,9 +274,10 @@ const DataManager = {
         return data;
     },
 
+    // CORREÇÃO: Função forceSync não verifica mais isDirty, forçando a atualização
     async forceSync(currentData) {
-        if (this.isDirty && currentData && currentData.currentUser) {
-            showToast("Conexão detectada. Sincronizando...", "info");
+        if (currentData && currentData.currentUser) {
+            // Chama save com flag manual = true
             await this.save(currentData, true);
         } else {
             this.updateSyncStatus(navigator.onLine);
