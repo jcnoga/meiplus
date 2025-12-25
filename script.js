@@ -48,8 +48,7 @@ const DataManager = {
             tx.objectStore(this.storeName).put(data, 'main_data');
         } catch(e) { console.error("IDB Error", e); }
 
-        // 3. Firebase (Automático se configurado - mantido da versão anterior)
-        // Nota: A função forceCloudSync permite sincronização voluntária adicional
+        // 3. Firebase (Sincronização opcional/automática)
         this.syncToCloud(data);
     },
 
@@ -57,7 +56,11 @@ const DataManager = {
         if (typeof firebase !== 'undefined' && firebase.apps.length && data.currentUser) {
             try {
                 const db = firebase.firestore();
-                await db.collection('users').doc(data.currentUser.id).set(data);
+                // CORREÇÃO DE ERRO: Saneamento de dados
+                // Remove campos 'undefined' antes de enviar ao Firestore, pois o Firestore não aceita 'undefined'.
+                const cleanData = JSON.parse(JSON.stringify(data));
+                
+                await db.collection('users').doc(data.currentUser.id).set(cleanData);
                 this.updateSyncStatus(true);
             } catch(e) { 
                 console.error("Cloud Sync Error", e); 
@@ -138,7 +141,7 @@ function showAuth() { document.getElementById('auth-screen').classList.remove('h
 
 async function saveData() { await DataManager.save(appData); }
 
-// Sincronização Voluntária (NOVO)
+// Sincronização Voluntária
 function forceCloudSync() {
     if(!appData.currentUser) return;
     const btn = document.querySelector('button[onclick="forceCloudSync()"]');
@@ -325,32 +328,35 @@ function saveCompanyData(e) {
 
 // --- ADMIN FUNCTIONS (jcnvap@gmail.com) ---
 function adminPopulateData() {
-    if(!confirm('Isso irá gerar dados aleatórios (Clientes, Transações). Continuar?')) return;
+    if(!confirm('Isso irá gerar dados aleatórios (Clientes, Transações, Produtos, Serviços, Fornecedores, Agenda). Continuar?')) return;
     
+    const userData = getUserData();
     const names = ["Silva Ltda", "João Mercado", "Tech Soluções", "Ana Doces", "Pedro Pinturas"];
     const catsRec = ["Venda", "Serviço"];
     const catsDesp = ["Compra", "Luz", "Internet"];
     
-    // Gerar 10 clientes
+    // 1. Gerar 10 clientes
     for(let i=0; i<10; i++) {
-        getUserData().clients.push({
+        userData.clients.push({
             id: 'c_test_' + Date.now() + i,
             name: names[i%names.length] + " " + i,
             phone: `(11) 9${Math.floor(Math.random()*90000000)}`,
             address: `Rua Teste ${i}`,
             cnpj_cpf: '000.000.000-00',
+            contact_person: 'Gerente ' + i,
+            email: `cliente${i}@teste.com`,
             is_test_data: true
         });
     }
 
-    // Gerar 30 transações (Valores médios e realistas)
+    // 2. Gerar 30 transações (Valores médios e realistas)
     for(let i=0; i<30; i++) {
         const type = Math.random() > 0.4 ? 'receita' : 'despesa';
         const val = (Math.random() * 500) + 50;
         const date = new Date();
         date.setDate(date.getDate() - Math.floor(Math.random() * 60)); // Últimos 60 dias
         
-        getUserData().transactions.push({
+        userData.transactions.push({
             id: 't_test_' + Date.now() + i,
             type: type,
             category: type === 'receita' ? catsRec[i%2] : catsDesp[i%3],
@@ -361,8 +367,75 @@ function adminPopulateData() {
             is_test_data: true
         });
     }
+
+    // 3. Gerar Produtos (5 itens)
+    const prodNames = ["Teclado Mecânico", "Monitor 24pol", "Mouse Sem Fio", "Cadeira Ergonômica", "Headset USB"];
+    for(let i=0; i<5; i++) {
+         userData.products.push({
+             id: 'p_test_' + Date.now() + i,
+             name: prodNames[i],
+             price: (Math.random() * 200 + 50).toFixed(2),
+             description: 'Produto de teste gerado automaticamente',
+             is_test_data: true
+         });
+    }
+
+    // 4. Gerar Serviços (5 itens)
+    const servNames = ["Formatação PC", "Consultoria TI", "Instalação Rede", "Design Logo", "Manutenção Site"];
+    for(let i=0; i<5; i++) {
+         userData.services.push({
+             id: 's_test_' + Date.now() + i,
+             name: servNames[i],
+             price: (Math.random() * 500 + 100).toFixed(2),
+             description: 'Serviço de teste gerado automaticamente',
+             is_test_data: true
+         });
+    }
+
+    // 5. Gerar Fornecedores (5 itens)
+    const supNames = ["Distribuidora Tech", "Papelaria Central", "Energia Local", "Net Provider", "Atacado Geral"];
+    for(let i=0; i<5; i++) {
+         userData.suppliers.push({
+             id: 'sup_test_' + Date.now() + i,
+             name: supNames[i],
+             phone: `(11) 9${Math.floor(Math.random()*90000000)}`,
+             address: `Av. Industrial, ${i*100}`,
+             cnpj_cpf: '00.000.000/0001-00',
+             contact_person: 'Representante ' + i,
+             email: `contato@${supNames[i].replace(/\s/g, '').toLowerCase()}.com`,
+             is_test_data: true
+         });
+    }
+
+    // 6. Gerar Agenda (10 itens)
+    const apptTitles = ["Reunião Inicial", "Manutenção Mensal", "Consultoria Rápida", "Entrega de Projeto", "Orçamento Presencial"];
+    const statuses = ["agendado", "concluido", "cancelado"];
+    
+    for(let i=0; i<10; i++) {
+        const date = new Date();
+        date.setDate(date.getDate() + Math.floor(Math.random() * 30) - 10); // -10 a +20 dias
+        const dateStr = date.toISOString().split('T')[0];
+        const hour = Math.floor(Math.random() * 9) + 9; // 09:00 as 18:00
+        
+        userData.appointments.push({
+            id: 'appt_test_' + Date.now() + i,
+            title: apptTitles[i % apptTitles.length],
+            date: dateStr,
+            time: `${hour}:00`,
+            client_name: `Cliente Teste ${i}`,
+            client_phone: `(11) 99999-${1000+i}`,
+            service_desc: 'Agendamento gerado automaticamente para testes',
+            value: (Math.random() * 300 + 50).toFixed(2),
+            status: statuses[Math.floor(Math.random() * statuses.length)],
+            pay_method: 'pix',
+            pay_status: Math.random() > 0.5 ? 'pago' : 'pendente',
+            obs: 'Registro de teste',
+            is_test_data: true
+        });
+    }
+
     saveData();
-    alert('Dados de teste gerados com sucesso!');
+    alert('Dados de teste gerados com sucesso (Clientes, Transações, Produtos, Serviços, Fornecedores, Agenda)!');
 }
 
 function adminClearData() {
@@ -372,6 +445,10 @@ function adminClearData() {
     // Filtra removendo os que tem a flag is_test_data
     d.clients = d.clients.filter(x => !x.is_test_data);
     d.transactions = d.transactions.filter(x => !x.is_test_data);
+    d.products = d.products.filter(x => !x.is_test_data);
+    d.services = d.services.filter(x => !x.is_test_data);
+    d.suppliers = d.suppliers.filter(x => !x.is_test_data);
+    d.appointments = d.appointments.filter(x => !x.is_test_data);
     
     // Se não tiver flag (dados antigos), reseta para seed
     if(d.transactions.length > 100) { // Safety check

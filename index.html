@@ -1,18 +1,13 @@
 <!DOCTYPE html>
 <!-- 
-    GESTOR MEI - VERSÃO V12.0 (MODULARIZADO & EXPANDIDO)
+    GESTOR MEI - VERSÃO V12.3 (POPULAR AGENDA TESTE)
     ESTRUTURA: HTML
-    
-    ALTERAÇÕES:
-    - Separação de CSS e JS.
-    - Inclusão de bibliotecas de exportação (html2pdf, docx, FileSaver).
-    - Novos botões para Admin e Sincronização.
 -->
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor MEI - Sistema Híbrido V12.0</title>
+    <title>Gestor MEI - Sistema Híbrido V12.3</title>
     
     <!-- CSS Link -->
     <link rel="stylesheet" href="style.css">
@@ -75,7 +70,7 @@
                     <span id="sync-indicator" class="sync-status sync-offline" title="Offline / Local"></span>
                     <span id="user-name-display">Usuário</span>
                 </p>
-                <!-- Botão de Sincronização Voluntária (NOVO) -->
+                <!-- Botão de Sincronização Voluntária -->
                 <button onclick="forceCloudSync()" class="btn-info text-sm w-full mt-2" style="padding: 0.3rem;">☁️ Sincronizar Nuvem</button>
                 
                 <p id="license-days-display" class="text-success text-sm mt-2">Licença Ativa</p>
@@ -123,9 +118,7 @@
                     <button class="btn-outline" onclick="renderAgenda('all')">Ver Todos</button>
                     <button class="btn-outline" onclick="renderAgenda('today')">Hoje</button>
                 </div>
-                <div id="agenda-list" class="dash-grid">
-                    <!-- Cards de compromissos inseridos via JS -->
-                </div>
+                <div id="agenda-list" class="dash-grid"></div>
             </section>
 
             <!-- View: Listagens -->
