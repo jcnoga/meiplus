@@ -58,7 +58,7 @@ const DataManager = {
                 const db = firebase.firestore();
                 // CORREÇÃO DE ERRO: Saneamento de dados
                 const cleanData = JSON.parse(JSON.stringify(data));
-                await db.collection('users').doc(data.currentUser.id).set(cleanData);
+                await db.collection('users').doc('u_' + data.currentUser.id.replace('u_', '')).set(cleanData);
                 this.updateSyncStatus(true);
             } catch(e) { 
                 console.error("Cloud Sync Error", e); 
@@ -175,31 +175,71 @@ function toggleAuth(screen) {
     document.getElementById('register-form').classList.toggle('hidden', screen !== 'register');
 }
 
-function handleGoogleLogin() {
+// LOGIN GOOGLE COM VERIFICAÇÃO E CADASTRO AUTOMÁTICO NA NUVEM
+async function handleGoogleLogin() {
     if (!firebaseConfig.apiKey) {
         alert('Simulação: Login com Google realizado! (Configure as chaves do Firebase para ativar)');
         return;
     }
     const provider = new firebase.auth.GoogleAuthProvider();
-    firebase.auth().signInWithPopup(provider).then((result) => {
+    
+    try {
+        const result = await firebase.auth().signInWithPopup(provider);
         const user = result.user;
+        const db = firebase.firestore();
+        const docId = 'u_' + user.uid;
+
+        // 1. Verificação de cadastro na nuvem
+        let docSnap;
+        try {
+            docSnap = await db.collection('users').doc(docId).get();
+        } catch(e) {
+            console.warn("Erro ao verificar nuvem:", e);
+        }
+
+        if (docSnap && docSnap.exists) {
+            // EXISTE NA NUVEM: Sincroniza para baixo (Restore) para garantir integridade
+            // Isso evita sobrescrever dados existentes com seed vazio
+            const cloudData = docSnap.data();
+            if(cloudData) {
+                appData = cloudData;
+                await DataManager.save(appData); // Atualiza local
+            }
+        }
+        
+        // 2. Verifica Local e Prepara Dados
         let appUser = appData.users.find(u => u.email === user.email);
+        
         if(!appUser) {
+            // Se não existe (nem veio da nuvem, nem tem local), cria novo (Seed)
             appUser = {
-                id: 'u_' + user.uid, 
+                id: docId, 
                 name: user.displayName, 
                 email: user.email, 
                 password: 'google_auth', 
                 licenseExpire: new Date().getTime() + (90 * 86400000),
                 company: { reserve_rate: 10, prolabore_target: 4000 }
             };
+            
+            // Garante integridade das listas
+            if(!appData.users) appData.users = [];
             appData.users.push(appUser);
+            
+            if(!appData.records) appData.records = {};
             appData.records[appUser.id] = createSeedData();
+            
+            // "Caso o usuário não esteja previamente cadastrado, realizar automaticamente o cadastro na nuvem"
+            // Ao salvar aqui, garantimos o cadastro inicial na nuvem
+            await DataManager.save(appData);
         }
+        
+        // 3. Login
         loginUser(appUser);
-    }).catch((error) => {
+
+    } catch (error) {
         alert("Erro no login Google: " + error.message);
-    });
+        console.error(error);
+    }
 }
 
 function createSeedData() {
@@ -344,7 +384,7 @@ function clearLocalData() {
             req.onerror = function () {
                 console.error("Erro ao apagar DB");
                 alert('Erro ao apagar banco de dados. Tente limpar o cache do navegador.');
-                location.reload(); // Reload anyway to clear session/localstorage effects
+                location.reload(); 
             };
 
             req.onblocked = function () {
