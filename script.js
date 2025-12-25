@@ -119,6 +119,7 @@ const DEFAULT_IRRF = [
 let currentCrudType = 'products'; 
 let currentListingType = 'clients';
 let currentFinanceFilter = 'all';
+let financeDateFilterActive = false;
 
 // --- INICIALIZAÇÃO E AUTH ---
 async function init() {
@@ -127,6 +128,12 @@ async function init() {
     
     if (!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
     
+    // Monitor de Conectividade para Sincronização Automática
+    window.addEventListener('online', async () => {
+        console.log("Conexão restaurada. Sincronizando com a nuvem...");
+        if(appData.currentUser) await DataManager.save(appData);
+    });
+
     const sessionUser = sessionStorage.getItem('mei_user_id');
     if (sessionUser) {
         const user = appData.users.find(u => u.id === sessionUser);
@@ -270,6 +277,10 @@ document.getElementById('register-form').addEventListener('submit', (e) => {
     appData.users.push(newUser); 
     appData.records[newUser.id] = createSeedData();
     
+    // Define o contexto do usuário antes de salvar para garantir que o syncToCloud 
+    // tenha o ID correto e persista na nuvem imediatamente após a criação.
+    appData.currentUser = newUser;
+
     saveData(); 
     loginUser(newUser);
 });
@@ -290,7 +301,14 @@ function navTo(viewId) {
     
     if(viewId === 'dashboard') updateDashboard();
     if(viewId === 'listagens') switchListing('clients');
-    if(viewId === 'financeiro') renderTransactions();
+    if(viewId === 'financeiro') {
+        // Sugerir data atual nos filtros
+        const today = new Date().toISOString().split('T')[0];
+        if(!document.getElementById('finance-start-date').value) document.getElementById('finance-start-date').value = today;
+        if(!document.getElementById('finance-end-date').value) document.getElementById('finance-end-date').value = today;
+        financeDateFilterActive = false; // Reset filter state on entry
+        renderTransactions();
+    }
     if(viewId === 'cadastros') renderCrud(currentCrudType);
     if(viewId === 'agenda') renderAgenda();
     if(viewId === 'fiscal') {
@@ -380,8 +398,37 @@ function clearLocalData() {
 
 // --- ADMIN FUNCTIONS ---
 function adminPopulateData() {
-    if(!confirm('Isso irá gerar dados aleatórios (Clientes, Transações, Produtos, Serviços, Fornecedores, Agenda). Continuar?')) return;
+    if(!confirm('Isso irá gerar dados aleatórios (Dados da Empresa, Clientes, Transações, Produtos, Serviços, Fornecedores, Agenda). Continuar?')) return;
     const userData = getUserData();
+    
+    // 1. Dados da Empresa (Novo)
+    appData.currentUser.company = {
+        name: "Empresa Teste Ltda",
+        cnpj: "00.000.000/0001-99",
+        address: "Av. Paulista, 1000, São Paulo - SP",
+        phone: "(11) 99999-0000",
+        whatsapp: "(11) 99999-0000",
+        role: "both",
+        reserve_rate: 15,
+        prolabore_target: 5000,
+        url_fiscal: DEFAULT_URL_FISCAL,
+        url_das: DEFAULT_URL_DAS
+    };
+    // Atualizar no cadastro de fornecedores como "Minha Empresa"
+    const supplierId = 'sup_own_' + appData.currentUser.id;
+    const existingSupIndex = userData.suppliers.findIndex(s => s.id === supplierId);
+    const companySup = {
+        id: supplierId,
+        name: "Empresa Teste Ltda (Minha Empresa)",
+        cnpj_cpf: "00.000.000/0001-99",
+        phone: "(11) 99999-0000",
+        address: "Av. Paulista, 1000, São Paulo - SP",
+        email: appData.currentUser.email,
+        contact_person: appData.currentUser.name,
+        is_own_company: true
+    };
+    if(existingSupIndex >= 0) userData.suppliers[existingSupIndex] = companySup; else userData.suppliers.push(companySup);
+
     const names = ["Silva Ltda", "João Mercado", "Tech Soluções", "Ana Doces", "Pedro Pinturas"];
     const catsRec = ["Venda", "Serviço"];
     const catsDesp = ["Compra", "Luz", "Internet"];
@@ -408,7 +455,7 @@ function adminPopulateData() {
         const hour = Math.floor(Math.random() * 9) + 9; 
         userData.appointments.push({ id: 'appt_test_' + Date.now() + i, title: apptTitles[i % apptTitles.length], date: date.toISOString().split('T')[0], time: `${hour}:00`, client_name: `Cliente Teste ${i}`, client_phone: `(11) 99999-${1000+i}`, service_desc: 'Agendamento gerado automaticamente para testes', value: (Math.random() * 300 + 50).toFixed(2), status: statuses[Math.floor(Math.random() * statuses.length)], pay_method: 'pix', pay_status: Math.random() > 0.5 ? 'pago' : 'pendente', obs: 'Registro de teste', is_test_data: true });
     }
-    saveData(); alert('Dados de teste gerados com sucesso!');
+    saveData(); alert('Dados de teste (incluindo empresa) gerados com sucesso!');
 }
 
 function adminClearData() {
@@ -430,6 +477,186 @@ function runQualityCheck() {
     d.transactions.forEach(t => { if(ids.has(t.id)) log.push(`ERRO: ID Duplicado ${t.id}`); ids.add(t.id); if(isNaN(t.value)) log.push(`ERRO: Valor inválido ${t.id}`); });
     d.appointments.forEach(a => { if(!a.title) log.push(`AVISO: Agenda sem título ${a.id}`); });
     alert(log.length === 0 ? "✅ Nenhuma inconsistência encontrada." : "⚠️ Relatório:\n\n" + log.join("\n"));
+}
+
+// --- FINANCEIRO (Correção Novo Lançamento) ---
+function renderTransactions() {
+    if (!getUserData().transactions) getUserData().transactions = [];
+    
+    const tbody = document.querySelector('#finance-table tbody');
+    tbody.innerHTML = '';
+
+    let list = getUserData().transactions;
+
+    // Apply Type Filter
+    if (currentFinanceFilter !== 'all') {
+        list = list.filter(t => t.type === currentFinanceFilter);
+    }
+
+    // Apply Date Filter
+    if (financeDateFilterActive) {
+        const start = document.getElementById('finance-start-date').value;
+        const end = document.getElementById('finance-end-date').value;
+        if (start && end) {
+            list = list.filter(t => t.date >= start && t.date <= end);
+        }
+    }
+
+    // Sort Descending Date
+    list.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4">Nenhum lançamento encontrado.</td></tr>';
+        return;
+    }
+
+    list.forEach(t => {
+        const color = t.type === 'receita' ? 'text-success' : 'text-danger';
+        const typeLabel = t.type === 'receita' ? 'Entrada' : 'Saída';
+        tbody.innerHTML += `
+            <tr>
+                <td>${t.date.split('-').reverse().join('/')}</td>
+                <td><span class="${color} font-bold">${typeLabel}</span></td>
+                <td>${t.category}</td>
+                <td>${t.obs || '-'}</td>
+                <td class="${color}">R$ ${parseFloat(t.value).toFixed(2)}</td>
+                <td>
+                    <button class="action-btn btn-warning" onclick="editTransaction('${t.id}')">✏️</button>
+                    <button class="action-btn btn-danger" onclick="deleteTransaction('${t.id}')">🗑️</button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+function applyFinanceDateFilter() {
+    financeDateFilterActive = true;
+    renderTransactions();
+}
+
+function clearFinanceDateFilter() {
+    financeDateFilterActive = false;
+    renderTransactions();
+}
+
+function filterFinance(type) {
+    currentFinanceFilter = type;
+    document.querySelectorAll('.fin-filter-btn').forEach(btn => {
+        const btnText = btn.innerText.trim();
+        const targetText = type === 'all' ? 'Todos' : (type === 'receita' ? 'Entradas' : 'Saídas');
+        if (btnText === targetText) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    renderTransactions();
+}
+
+function openTransactionModal(trans = null) {
+    document.getElementById('form-transaction').reset();
+    
+    // Set Date to Today if new
+    if (!trans) {
+        document.getElementById('trans-date').valueAsDate = new Date();
+        document.getElementById('trans-id').value = '';
+        document.getElementById('trans-type').value = 'receita'; // Default
+    } else {
+        document.getElementById('trans-id').value = trans.id;
+        document.getElementById('trans-type').value = trans.type;
+        document.getElementById('trans-date').value = trans.date;
+        document.getElementById('trans-value').value = trans.value;
+        document.getElementById('trans-obs').value = trans.obs || '';
+    }
+
+    updateTransactionDependencies(trans ? trans.category : null, trans ? trans.entity : null);
+    
+    document.getElementById('modal-transaction').classList.remove('hidden');
+}
+
+function editTransaction(id) {
+    const t = getUserData().transactions.find(x => x.id === id);
+    if (t) openTransactionModal(t);
+}
+
+function updateTransactionDependencies(selectedCat = null, selectedEntity = null) {
+    const type = document.getElementById('trans-type').value;
+    const catSelect = document.getElementById('trans-category');
+    const entitySelect = document.getElementById('trans-entity');
+    const entityLabel = document.querySelector("label[for='trans-entity']") || entitySelect.previousElementSibling;
+
+    // Update Categories
+    catSelect.innerHTML = '';
+    const cats = type === 'receita' 
+        ? ['Venda de Produtos', 'Prestação de Serviços', 'Outros'] 
+        : ['Compras (Estoque)', 'Despesas Operacionais', 'Impostos/DAS', 'Pró-labore', 'Marketing', 'Outros'];
+    
+    cats.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.innerText = c;
+        if (selectedCat && selectedCat === c) opt.selected = true;
+        catSelect.appendChild(opt);
+    });
+
+    // Update Entities (Clients or Suppliers)
+    entitySelect.innerHTML = '<option value="">Selecione...</option>';
+    let list = [];
+    if (type === 'receita') {
+        if(entityLabel) entityLabel.innerText = "Cliente";
+        list = getUserData().clients || [];
+    } else {
+        if(entityLabel) entityLabel.innerText = "Fornecedor";
+        list = getUserData().suppliers || [];
+    }
+
+    list.forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = item.name; 
+        opt.innerText = item.name;
+        if (selectedEntity && selectedEntity === item.name) opt.selected = true;
+        entitySelect.appendChild(opt);
+    });
+}
+
+function saveTransaction(e) {
+    e.preventDefault();
+    const id = document.getElementById('trans-id').value;
+    const type = document.getElementById('trans-type').value;
+    
+    const trans = {
+        id: id || 't_' + Date.now(),
+        type: type,
+        category: document.getElementById('trans-category').value,
+        value: parseFloat(document.getElementById('trans-value').value),
+        date: document.getElementById('trans-date').value,
+        entity: document.getElementById('trans-entity').value,
+        obs: document.getElementById('trans-obs').value
+    };
+
+    const list = getUserData().transactions;
+    if (id) {
+        const idx = list.findIndex(x => x.id === id);
+        if (idx !== -1) list[idx] = trans;
+    } else {
+        list.push(trans);
+    }
+
+    saveData();
+    closeModal('modal-transaction');
+    renderTransactions();
+}
+
+function deleteTransaction(id) {
+    if (confirm('Tem certeza que deseja excluir este lançamento?')) {
+        const list = getUserData().transactions;
+        const idx = list.findIndex(x => x.id === id);
+        if (idx !== -1) {
+            list.splice(idx, 1);
+            saveData();
+            renderTransactions();
+        }
+    }
 }
 
 // --- DASHBOARD ---
@@ -518,46 +745,86 @@ function loadRPA(id) {
 }
 function deleteRPA(id) { if(confirm('Excluir?')) { const l = getUserData().rpas; l.splice(l.findIndex(x=>x.id===id),1); saveData(); toggleRPAHistory(); } }
 
-// --- EXPORTAÇÃO DOCX REAL (Melhorada V12.7) ---
+// --- EXPORTAÇÃO DOCX REAL (Melhorada V13.0 - Layout Profissional) ---
 function exportRPADocxReal() {
     if (typeof docx === 'undefined') { alert("Erro: Biblioteca docx não carregada."); return; }
-    const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, BorderStyle } = docx;
+    
+    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, ShadingType } = docx;
 
     // Coleta Dados
-    const compName = document.getElementById('rpa-comp-name').value || "_________________";
-    const compCnpj = document.getElementById('rpa-comp-cnpj').value || "_________________";
-    const compAddr = document.getElementById('rpa-comp-addr').value || "_________________";
-    const provName = document.getElementById('rpa-prov-name').value || "_________________";
-    const provCpf = document.getElementById('rpa-prov-cpf').value || "_________________";
+    const compName = document.getElementById('rpa-comp-name').value || "";
+    const compCnpj = document.getElementById('rpa-comp-cnpj').value || "";
+    const compAddr = document.getElementById('rpa-comp-addr').value || "";
+    
+    const provName = document.getElementById('rpa-prov-name').value || "";
+    const provCpf = document.getElementById('rpa-prov-cpf').value || "";
     const provPhone = document.getElementById('rpa-prov-phone').value || "";
-    const provAddr = document.getElementById('rpa-prov-addr').value || "_________________";
+    const provAddr = document.getElementById('rpa-prov-addr').value || "";
+    
     const desc = document.getElementById('rpa-desc').value || "Serviços prestados";
     const dateRaw = document.getElementById('rpa-date').value;
     const dateFormatted = dateRaw ? dateRaw.split('-').reverse().join('/') : new Date().toLocaleDateString('pt-BR');
-    const valBruto = document.getElementById('rpa-value').value || "0,00";
+    
+    const valBruto = document.getElementById('rpa-value').value || "0.00";
     const valInss = document.getElementById('rpa-inss').value || "R$ 0,00";
     const valIss = document.getElementById('rpa-iss-val').value || "R$ 0,00";
     const valIrrf = document.getElementById('rpa-irrf').value || "R$ 0,00";
     const valNet = document.getElementById('rpa-net').value || "R$ 0,00";
+    const valBrutoFmt = parseFloat(valBruto).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-    // Estilos
-    const titleStyle = { bold: true, size: 28, font: "Calibri" };
-    const labelStyle = { bold: true, font: "Calibri" };
-    const valueStyle = { font: "Calibri" };
+    // Estilos Utilitários
+    const cellPadding = { top: 100, bottom: 100, left: 100, right: 100 };
+    const headerShading = { fill: "E0E0E0", type: ShadingType.CLEAR, color: "auto" };
+    const fontStd = "Arial";
+    const sizeStd = 22; // 11pt
+    const sizeSmall = 18; // 9pt
+    const borderStd = { style: BorderStyle.SINGLE, size: 2, color: "000000" };
+    const noBorder = { style: BorderStyle.NIL };
 
-    const createLabelValue = (label, value) => {
-        return new Paragraph({
-            children: [ new TextRun({ text: label, ...labelStyle }), new TextRun({ text: " " + value, ...valueStyle }) ],
-            spacing: { after: 50 }
+    // Função para criar células de cabeçalho de seção
+    const createHeaderCell = (text) => {
+        return new TableCell({
+            children: [new Paragraph({ 
+                children: [new TextRun({ text: text, bold: true, font: fontStd, size: sizeStd })], 
+                alignment: AlignmentType.CENTER 
+            })],
+            shading: headerShading,
+            columnSpan: 2,
+            margins: cellPadding
         });
     };
 
-    const createSectionHeader = (text) => {
-        return new Paragraph({
-            text: text,
-            heading: HeadingLevel.HEADING_3,
-            spacing: { before: 200, after: 100 },
-            border: { bottom: { color: "CCCCCC", space: 1, value: "single", size: 6 } }
+    // Função para criar linha de dados (Rótulo: Valor)
+    const createDataRow = (label, value) => {
+        return new TableRow({
+            children: [
+                new TableCell({
+                    children: [new Paragraph({ children: [new TextRun({ text: label, bold: true, font: fontStd, size: sizeStd })] })],
+                    width: { size: 30, type: WidthType.PERCENTAGE },
+                    margins: cellPadding
+                }),
+                new TableCell({
+                    children: [new Paragraph({ children: [new TextRun({ text: value, font: fontStd, size: sizeStd })] })],
+                    width: { size: 70, type: WidthType.PERCENTAGE },
+                    margins: cellPadding
+                })
+            ]
+        });
+    };
+
+    // Função para linha financeira (Descrição | Valor alinhado à direita)
+    const createFinanceRow = (label, value, isBold = false) => {
+        return new TableRow({
+            children: [
+                new TableCell({
+                    children: [new Paragraph({ children: [new TextRun({ text: label, bold: isBold, font: fontStd, size: sizeStd })] })],
+                    margins: cellPadding
+                }),
+                new TableCell({
+                    children: [new Paragraph({ children: [new TextRun({ text: value, bold: isBold, font: fontStd, size: sizeStd })], alignment: AlignmentType.RIGHT })],
+                    margins: cellPadding
+                })
+            ]
         });
     };
 
@@ -565,49 +832,102 @@ function exportRPADocxReal() {
         sections: [{
             properties: {},
             children: [
-                new Paragraph({ children: [new TextRun({ text: "RECIBO DE PAGAMENTO A AUTÔNOMO (RPA)", ...titleStyle })], alignment: AlignmentType.CENTER, spacing: { after: 400 } }),
-                
-                createSectionHeader("1. FONTE PAGADORA (CONTRATANTE)"),
-                createLabelValue("Razão Social:", compName), createLabelValue("CNPJ:", compCnpj), createLabelValue("Endereço:", compAddr),
-
-                createSectionHeader("2. DADOS DO PRESTADOR (AUTÔNOMO)"),
-                createLabelValue("Nome:", provName),
-                new Paragraph({ children: [ new TextRun({ text: "CPF: ", ...labelStyle }), new TextRun({ text: provCpf + "    ", ...valueStyle }), new TextRun({ text: "Telefone: ", ...labelStyle }), new TextRun({ text: provPhone, ...valueStyle }) ], spacing: { after: 50 } }),
-                createLabelValue("Endereço:", provAddr),
-
-                createSectionHeader("3. DADOS DO SERVIÇO"),
-                createLabelValue("Descrição do Serviço:", desc), createLabelValue("Data de Referência:", dateFormatted),
-
-                createSectionHeader("4. DEMONSTRATIVO DE VALORES"),
+                // Tabela Principal que engloba o Recibo
                 new Table({
                     width: { size: 100, type: WidthType.PERCENTAGE },
                     rows: [
-                        new TableRow({ children: [ new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "DISCRIMINAÇÃO", bold: true })] })], shading: { fill: "F2F2F2" } }), new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "VALOR (R$)", bold: true })] })], shading: { fill: "F2F2F2" } }) ] }),
-                        new TableRow({ children: [ new TableCell({ children: [new Paragraph("Valor Bruto")] }), new TableCell({ children: [new Paragraph(`R$ ${valBruto}`)] }) ] }),
-                        new TableRow({ children: [ new TableCell({ children: [new Paragraph("(-) Desconto INSS (11%)")] }), new TableCell({ children: [new Paragraph(valInss.replace('R$ ', ''))] }) ] }),
-                        new TableRow({ children: [ new TableCell({ children: [new Paragraph("(-) Desconto ISS")] }), new TableCell({ children: [new Paragraph(valIss.replace('R$ ', ''))] }) ] }),
-                        new TableRow({ children: [ new TableCell({ children: [new Paragraph("(-) Desconto IRRF")] }), new TableCell({ children: [new Paragraph(valIrrf.replace('R$ ', ''))] }) ] }),
-                        new TableRow({ children: [ new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "VALOR LÍQUIDO A RECEBER", bold: true })] })] }), new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: valNet, bold: true, size: 24 })] })] }) ] }),
-                    ]
-                }),
+                        // Título
+                        new TableRow({
+                            children: [new TableCell({
+                                children: [
+                                    new Paragraph({ children: [new TextRun({ text: "RECIBO DE PAGAMENTO A AUTÔNOMO (RPA)", bold: true, size: 28, font: fontStd })], alignment: AlignmentType.CENTER }),
+                                    new Paragraph({ children: [new TextRun({ text: "Documento Auxiliar de Pagamento", size: 16, font: fontStd })], alignment: AlignmentType.CENTER })
+                                ],
+                                columnSpan: 2,
+                                margins: { top: 200, bottom: 200 },
+                                borders: { bottom: borderStd }
+                            })]
+                        }),
 
-                createSectionHeader("5. DECLARAÇÃO"),
-                new Paragraph({ text: `Recebi da empresa ${compName} a importância líquida de ${valNet} referente aos serviços prestados descritos acima. Pelo pagamento, dou plena e geral quitação.`, alignment: AlignmentType.JUSTIFIED, spacing: { after: 400 } }),
+                        // Seção 1: Fonte Pagadora
+                        new TableRow({ children: [createHeaderCell("1. DADOS DA FONTE PAGADORA (EMPRESA)")] }),
+                        createDataRow("Razão Social:", compName),
+                        createDataRow("CNPJ:", compCnpj),
+                        createDataRow("Endereço:", compAddr),
 
-                new Table({
-                    width: { size: 100, type: WidthType.PERCENTAGE },
-                    borders: docx.TableBorders.NONE,
-                    rows: [
-                        new TableRow({ children: [ new TableCell({ children: [ new Paragraph({ text: "_______________________________________", alignment: AlignmentType.CENTER }), new Paragraph({ text: provName, bold: true, alignment: AlignmentType.CENTER }), new Paragraph({ text: "(Prestador)", alignment: AlignmentType.CENTER }) ] }), new TableCell({ children: [ new Paragraph({ text: "_______________________________________", alignment: AlignmentType.CENTER }), new Paragraph({ text: compName, bold: true, alignment: AlignmentType.CENTER }), new Paragraph({ text: "(Contratante)", alignment: AlignmentType.CENTER }) ] }) ] })
+                        // Seção 2: Prestador
+                        new TableRow({ children: [createHeaderCell("2. DADOS DO PRESTADOR DE SERVIÇO (AUTÔNOMO)")] }),
+                        createDataRow("Nome Completo:", provName),
+                        createDataRow("CPF / Documento:", provCpf),
+                        createDataRow("Telefone / Contato:", provPhone),
+                        createDataRow("Endereço:", provAddr),
+
+                        // Seção 3: Detalhes do Serviço
+                        new TableRow({ children: [createHeaderCell("3. DADOS DO SERVIÇO")] }),
+                        createDataRow("Descrição:", desc),
+                        createDataRow("Data do Pagamento:", dateFormatted),
+
+                        // Seção 4: Valores
+                        new TableRow({ children: [createHeaderCell("4. DETALHAMENTO DE VALORES E IMPOSTOS")] }),
+                        new TableRow({
+                            children: [
+                                new TableCell({
+                                    children: [
+                                        new Table({
+                                            width: { size: 100, type: WidthType.PERCENTAGE },
+                                            borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder, insideHorizontal: { style: BorderStyle.DOTTED, size: 1, color: "CCCCCC" } },
+                                            rows: [
+                                                createFinanceRow("Valor Bruto do Serviço", valBrutoFmt, true),
+                                                createFinanceRow("(-) Desconto INSS (11%)", valInss.replace('R$ ', 'R$ -')),
+                                                createFinanceRow("(-) Desconto ISS", valIss.replace('R$ ', 'R$ -')),
+                                                createFinanceRow("(-) Desconto IRRF", valIrrf.replace('R$ ', 'R$ -')),
+                                                createFinanceRow("(=) VALOR LÍQUIDO A RECEBER", valNet, true)
+                                            ]
+                                        })
+                                    ],
+                                    columnSpan: 2,
+                                    margins: { top: 100, bottom: 100, left: 200, right: 200 }
+                                })
+                            ]
+                        }),
+
+                        // Seção 5: Declaração
+                        new TableRow({ children: [createHeaderCell("5. DECLARAÇÃO E ASSINATURAS")] }),
+                        new TableRow({
+                            children: [new TableCell({
+                                children: [
+                                    new Paragraph({
+                                        children: [new TextRun({ text: `Declaro ter recebido de ${compName} a importância líquida de ${valNet}, referente aos serviços acima discriminados, dando plena e geral quitação.`, font: fontStd, size: sizeStd })],
+                                        alignment: AlignmentType.JUSTIFIED,
+                                        spacing: { after: 400 }
+                                    }),
+                                    // Assinaturas
+                                    new Table({
+                                        width: { size: 100, type: WidthType.PERCENTAGE },
+                                        borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder, insideVertical: noBorder, insideHorizontal: noBorder },
+                                        rows: [
+                                            new TableRow({
+                                                children: [
+                                                    new TableCell({ children: [new Paragraph({ text: "____________________________________", alignment: AlignmentType.CENTER }), new Paragraph({ text: "Assinatura do Prestador", alignment: AlignmentType.CENTER, size: sizeSmall })], width: { size: 50, type: WidthType.PERCENTAGE } }),
+                                                    new TableCell({ children: [new Paragraph({ text: "____________________________________", alignment: AlignmentType.CENTER }), new Paragraph({ text: "Assinatura da Fonte Pagadora", alignment: AlignmentType.CENTER, size: sizeSmall })], width: { size: 50, type: WidthType.PERCENTAGE } })
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    new Paragraph({ text: "", spacing: { after: 200 } }),
+                                    new Paragraph({ text: `Local e Data: __________________________, ${dateFormatted}`, alignment: AlignmentType.CENTER, font: fontStd, size: sizeSmall })
+                                ],
+                                columnSpan: 2,
+                                margins: { top: 200, bottom: 200, left: 200, right: 200 }
+                            })]
+                        })
                     ]
-                }),
-                new Paragraph({ text: "", spacing: { before: 200 } }),
-                new Paragraph({ text: `Local e Data: ____________________, ${dateFormatted}`, alignment: AlignmentType.CENTER })
+                })
             ]
         }]
     });
 
-    Packer.toBlob(doc).then(blob => { saveAs(blob, "RPA_Completo.docx"); });
+    Packer.toBlob(doc).then(blob => { saveAs(blob, `RPA_${provName.split(' ')[0]}_${dateRaw}.docx`); });
 }
 
 function exportReportPDFHighQuality() {
@@ -641,6 +961,76 @@ function saveCrudItem(e) {
     const l = getUserData()[currentCrudType]; const idx = l.findIndex(x => x.id === id); idx !== -1 ? l[idx] = i : l.push(i); saveData(); closeModal('modal-crud'); renderCrud(currentCrudType); 
 }
 function deleteCrudItem(t,id){ if(confirm('Apagar?')){const l=getUserData()[t]; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderCrud(t);} }
+
+// --- LISTAGENS (Correção Solicitada) ---
+function switchListing(type) {
+    currentListingType = type;
+    
+    // Atualiza botões
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('onclick').includes(type));
+    });
+    
+    // Filtro de Movimentações
+    const filterDiv = document.getElementById('movements-filter');
+    if (filterDiv) {
+        if (type === 'movimentacoes') filterDiv.classList.remove('hidden');
+        else filterDiv.classList.add('hidden');
+    }
+    
+    renderListingTable();
+}
+
+function renderListingTable() {
+    const tbody = document.getElementById('listing-tbody');
+    const thead = document.getElementById('listing-thead');
+    if (!tbody || !thead) return;
+    
+    tbody.innerHTML = '';
+    thead.innerHTML = '';
+    
+    const data = getUserData();
+    let rows = [];
+    
+    if (currentListingType === 'clients') {
+        thead.innerHTML = '<tr><th>Nome</th><th>Telefone</th><th>Email</th><th>Endereço</th></tr>';
+        rows = data.clients || [];
+        rows.forEach(r => tbody.innerHTML += `<tr><td>${r.name}</td><td>${r.phone||'-'}</td><td>${r.email||'-'}</td><td>${r.address||'-'}</td></tr>`);
+    } else if (currentListingType === 'suppliers') {
+        thead.innerHTML = '<tr><th>Nome</th><th>Contato</th><th>Telefone</th><th>CNPJ</th></tr>';
+        rows = data.suppliers || [];
+        rows.forEach(r => tbody.innerHTML += `<tr><td>${r.name}</td><td>${r.contact_person||'-'}</td><td>${r.phone||'-'}</td><td>${r.cnpj_cpf||'-'}</td></tr>`);
+    } else if (currentListingType === 'products') {
+        thead.innerHTML = '<tr><th>Nome</th><th>Preço</th><th>Descrição</th></tr>';
+        rows = data.products || [];
+        rows.forEach(r => tbody.innerHTML += `<tr><td>${r.name}</td><td>R$ ${parseFloat(r.price).toFixed(2)}</td><td>${r.description||'-'}</td></tr>`);
+    } else if (currentListingType === 'services') {
+        thead.innerHTML = '<tr><th>Nome</th><th>Preço</th><th>Descrição</th></tr>';
+        rows = data.services || [];
+        rows.forEach(r => tbody.innerHTML += `<tr><td>${r.name}</td><td>R$ ${parseFloat(r.price).toFixed(2)}</td><td>${r.description||'-'}</td></tr>`);
+    } else if (currentListingType === 'movimentacoes') {
+        thead.innerHTML = '<tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Entidade</th><th>Valor</th></tr>';
+        rows = data.transactions || [];
+        
+        // Filter Month
+        const m = document.getElementById('listing-month-filter').value;
+        if (m) rows = rows.filter(r => r.date.startsWith(m));
+        
+        // Sort
+        rows.sort((a,b) => new Date(b.date) - new Date(a.date));
+        
+        rows.forEach(r => {
+            const color = r.type === 'receita' ? 'text-success' : 'text-danger';
+            const sign = r.type === 'receita' ? '+' : '-';
+            tbody.innerHTML += `<tr><td>${r.date.split('-').reverse().join('/')}</td><td style="text-transform:capitalize">${r.type}</td><td>${r.category}</td><td>${r.entity||'-'}</td><td class="${color}">${sign} R$ ${parseFloat(r.value).toFixed(2)}</td></tr>`;
+        });
+    }
+    
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center p-4">Nenhum registro encontrado para este filtro.</td></tr>';
+    }
+}
+
 function getUserData() { return appData.records[appData.currentUser.id]; }
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 function checkLicense() { const d = Math.ceil((appData.currentUser.licenseExpire - Date.now())/86400000); document.getElementById('license-days-display').innerText = d>0?d+' dias':'Expirado'; document.getElementById('license-warning').classList.toggle('hidden', d>0); }
