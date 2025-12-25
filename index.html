@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <!-- 
-    GESTOR MEI - VERSÃO V12.3 (POPULAR AGENDA TESTE)
+    GESTOR MEI - VERSÃO V12.4 (EXCLUSÃO DADOS LOCAIS)
     ESTRUTURA: HTML
 -->
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor MEI - Sistema Híbrido V12.3</title>
+    <title>Gestor MEI - Sistema Híbrido V12.4</title>
     
     <!-- CSS Link -->
     <link rel="stylesheet" href="style.css">
@@ -335,6 +335,8 @@
                         <button class="btn-info" onclick="downloadBackup()">📥 Backup (.json)</button>
                         <div class="flex flex-col"><label style="margin-top:0">Restaurar</label><input type="file" id="restore-file" accept=".json" onchange="restoreBackup(this)"></div>
                     </div>
+                    <!-- Botão de Limpeza de Dados Locais -->
+                    <button class="btn-danger" style="margin-top: 1rem; width: 100%;" onclick="clearLocalData()">🗑️ Apagar Dados Locais (Reset)</button>
                 </div>
                 <div class="stat-card mb-4">
                     <h3>🔐 Licença</h3>

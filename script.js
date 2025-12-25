@@ -57,9 +57,7 @@ const DataManager = {
             try {
                 const db = firebase.firestore();
                 // CORREÇÃO DE ERRO: Saneamento de dados
-                // Remove campos 'undefined' antes de enviar ao Firestore, pois o Firestore não aceita 'undefined'.
                 const cleanData = JSON.parse(JSON.stringify(data));
-                
                 await db.collection('users').doc(data.currentUser.id).set(cleanData);
                 this.updateSyncStatus(true);
             } catch(e) { 
@@ -326,6 +324,40 @@ function saveCompanyData(e) {
     saveData(); alert('Dados salvos e cadastro de fornecedor atualizado!');
 }
 
+function clearLocalData() {
+    if (confirm('ATENÇÃO: Isso apagará todos os dados DESTE DISPOSITIVO.\n\nSe você não tiver backup ou sincronização na nuvem, os dados serão perdidos para sempre.\n\nDeseja continuar?')) {
+        try {
+            // 1. Limpa LocalStorage
+            localStorage.removeItem(DB_KEY);
+
+            // 2. Limpa SessionStorage (Logout)
+            sessionStorage.clear();
+
+            // 3. Deleta IndexedDB
+            const req = indexedDB.deleteDatabase(DataManager.dbName);
+
+            req.onsuccess = function () {
+                alert('Dados locais apagados com sucesso.');
+                location.reload();
+            };
+
+            req.onerror = function () {
+                console.error("Erro ao apagar DB");
+                alert('Erro ao apagar banco de dados. Tente limpar o cache do navegador.');
+                location.reload(); // Reload anyway to clear session/localstorage effects
+            };
+
+            req.onblocked = function () {
+                alert('Operação bloqueada. Feche outras abas do sistema e tente novamente.');
+            };
+
+        } catch (e) {
+            console.error(e);
+            alert('Erro ao limpar dados: ' + e.message);
+        }
+    }
+}
+
 // --- ADMIN FUNCTIONS (jcnvap@gmail.com) ---
 function adminPopulateData() {
     if(!confirm('Isso irá gerar dados aleatórios (Clientes, Transações, Produtos, Serviços, Fornecedores, Agenda). Continuar?')) return;
@@ -343,8 +375,6 @@ function adminPopulateData() {
             phone: `(11) 9${Math.floor(Math.random()*90000000)}`,
             address: `Rua Teste ${i}`,
             cnpj_cpf: '000.000.000-00',
-            contact_person: 'Gerente ' + i,
-            email: `cliente${i}@teste.com`,
             is_test_data: true
         });
     }
