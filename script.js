@@ -680,8 +680,23 @@ function updateDashboard() {
 function renderAgenda(filter = '') {
     if(!getUserData().appointments) getUserData().appointments = [];
     let list = getUserData().appointments.sort((a,b) => new Date(a.date+'T'+a.time) - new Date(b.date+'T'+b.time));
-    if (filter === 'today') list = list.filter(a => a.date === new Date().toISOString().split('T')[0]);
-    else if (!filter) { const d = document.getElementById('agenda-filter-date').value; if(d) list = list.filter(a => a.date === d); }
+
+    // 1. Filtro de Data (Lógica Existente)
+    if (filter === 'today') {
+        list = list.filter(a => a.date === new Date().toISOString().split('T')[0]);
+    } else if (filter === 'all') {
+        // Mostra todas as datas
+    } else if (!filter) {
+        const d = document.getElementById('agenda-filter-date').value;
+        if(d) list = list.filter(a => a.date === d);
+    }
+
+    // 2. Filtro de Status (Nova Lógica)
+    const statusFilter = document.getElementById('agenda-filter-status');
+    if (statusFilter && statusFilter.value) {
+        list = list.filter(a => a.status === statusFilter.value);
+    }
+
     const c = document.getElementById('agenda-list'); c.innerHTML = '';
     if (list.length === 0) { c.innerHTML = '<p class="text-center p-4" style="grid-column: 1/-1;">Nenhum agendamento.</p>'; return; }
     const sm = { 'agendado': { l:'Agendado', c:'bg-scheduled', k:'status-agendado'}, 'concluido': { l:'Concluído', c:'bg-done', k:'status-concluido'}, 'cancelado': { l:'Cancelado', c:'bg-canceled', k:'status-cancelado'} };
@@ -714,8 +729,19 @@ function deleteAppointment(id) { if(confirm('Excluir?')) { const l = getUserData
 
 // --- RPA ---
 function loadRPAOptions() {
-    const c = appData.currentUser.company||{}; document.getElementById('rpa-comp-name').value=c.name||''; document.getElementById('rpa-comp-cnpj').value=c.cnpj||''; document.getElementById('rpa-comp-addr').value=c.address||'';
+    const c = appData.currentUser.company||{}; 
+    
+    // Pre-fill Contractor (Company)
+    document.getElementById('rpa-comp-name').value=c.name||''; 
+    document.getElementById('rpa-comp-cnpj').value=c.cnpj||''; 
+    document.getElementById('rpa-comp-addr').value=c.address||'';
+    
+    // Pre-fill Provider (Autônomo - Responsible)
     if(!document.getElementById('rpa-prov-name').value) document.getElementById('rpa-prov-name').value=appData.currentUser.name;
+    // Added suggestions for Phone and Address based on Company Data
+    if(!document.getElementById('rpa-prov-phone').value) document.getElementById('rpa-prov-phone').value=c.phone||'';
+    if(!document.getElementById('rpa-prov-addr').value) document.getElementById('rpa-prov-addr').value=c.address||'';
+    
     const s = document.getElementById('rpa-provider-select'); s.innerHTML='<option value="">Selecione...</option>';
     getUserData().suppliers.forEach(i => s.innerHTML+=`<option value="${i.id}">${i.name}</option>`);
     document.getElementById('rpa-date').valueAsDate=new Date(); document.getElementById('rpa-id').value='';

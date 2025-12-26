@@ -114,6 +114,12 @@
                     <button class="btn-primary" onclick="openAppointmentModal()">+ Novo Agendamento</button>
                 </div>
                 <div class="flex gap-2 mb-4">
+                    <select id="agenda-filter-status" onchange="renderAgenda()" style="max-width: 150px; margin:0;">
+                        <option value="">Todos Status</option>
+                        <option value="agendado">Agendado</option>
+                        <option value="concluido">Concluído</option>
+                        <option value="cancelado">Cancelado</option>
+                    </select>
                     <input type="date" id="agenda-filter-date" onchange="renderAgenda()" style="max-width: 200px; margin:0;">
                     <button class="btn-outline" onclick="renderAgenda('all')">Ver Todos</button>
                     <button class="btn-outline" onclick="renderAgenda('today')">Hoje</button>
