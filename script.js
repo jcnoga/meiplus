@@ -106,8 +106,9 @@ if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
 }
 
 // --- VARIÁVEIS DE ESTADO ---
-let appData = { currentUser: null, users: [], records: {}, irrfTable: [] };
+let appData = { currentUser: null, users: [], records: {}, irrfTable: [], meiOptions: [] };
 
+// TABELA IRRF 2025 ATUALIZADA
 const DEFAULT_IRRF = [
     { id: 'irrf_1', max: 2259.20, rate: 0, deduction: 0 },
     { id: 'irrf_2', max: 2826.65, rate: 7.5, deduction: 169.44 },
@@ -128,6 +129,13 @@ async function init() {
     
     if (!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
     
+    // Inicialização Opções MEI 2025
+    if (!appData.meiOptions || appData.meiOptions.length === 0) {
+        appData.meiOptions = [
+            { id: 'mei_2025', year: 2025, salary: 1620.99, inssRate: 5, icms: 1.00, iss: 5.00 }
+        ];
+    }
+
     // Monitor de Conectividade para Sincronização Automática
     window.addEventListener('online', async () => {
         console.log("Conexão restaurada. Sincronizando com a nuvem...");
@@ -313,7 +321,9 @@ function navTo(viewId) {
     if(viewId === 'agenda') renderAgenda();
     if(viewId === 'fiscal') {
         renderIrrf();
+        renderMeiFiscalCalculations(); // Inicia cálculo MEI 2025
         const comp = appData.currentUser.company || {};
+        // LINKAGEM CORRETA DOS BOTÕES FISCAIS
         document.getElementById('link-emissor').href = comp.url_fiscal || DEFAULT_URL_FISCAL;
         document.getElementById('link-das').href = comp.url_das || DEFAULT_URL_DAS;
     }
@@ -333,6 +343,9 @@ function loadSettings() {
     document.getElementById('conf-url-das').value = c.url_das || DEFAULT_URL_DAS;
     document.getElementById('conf-reserve-rate').value = c.reserve_rate || 10;
     document.getElementById('conf-prolabore-target').value = c.prolabore_target || 4000;
+
+    // Carregar Opções MEI
+    renderMeiOptions();
 
     // Lógica Admin para jcnvap@gmail.com
     if(appData.currentUser.email === 'jcnvap@gmail.com') {
@@ -378,6 +391,131 @@ function saveCompanyData(e) {
     if(supIndex >= 0) suppliersList[supIndex] = supplierData; else suppliersList.push(supplierData);
     
     saveData(); alert('Dados salvos e cadastro de fornecedor atualizado!');
+}
+
+// --- GESTÃO MEI (CRUD) ---
+function renderMeiOptions() {
+    const tbody = document.querySelector('#mei-options-table tbody');
+    tbody.innerHTML = '';
+    
+    if(!appData.meiOptions) appData.meiOptions = [];
+    
+    appData.meiOptions.sort((a,b) => b.year - a.year); // Ordenar por ano desc
+
+    appData.meiOptions.forEach(opt => {
+        const inssVal = opt.salary * (opt.inssRate / 100);
+        const total = inssVal + parseFloat(opt.icms) + parseFloat(opt.iss);
+        
+        tbody.innerHTML += `
+            <tr>
+                <td>${opt.year}</td>
+                <td>R$ ${parseFloat(opt.salary).toFixed(2)}</td>
+                <td>R$ ${total.toFixed(2)}</td>
+                <td>
+                    <button class="action-btn btn-warning" onclick="openMeiModal('${opt.id}')">✏️</button>
+                    <button class="action-btn btn-danger" onclick="deleteMeiOption('${opt.id}')">🗑️</button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+function openMeiModal(id = null) {
+    document.getElementById('form-mei').reset();
+    if(id) {
+        const opt = appData.meiOptions.find(o => o.id === id);
+        if(opt) {
+            document.getElementById('mei-id').value = opt.id;
+            document.getElementById('mei-year').value = opt.year;
+            document.getElementById('mei-salary').value = opt.salary;
+            document.getElementById('mei-inss-rate').value = opt.inssRate;
+            document.getElementById('mei-icms').value = opt.icms;
+            document.getElementById('mei-iss').value = opt.iss;
+        }
+    } else {
+        document.getElementById('mei-id').value = '';
+        document.getElementById('mei-year').value = new Date().getFullYear();
+    }
+    document.getElementById('modal-mei').classList.remove('hidden');
+}
+
+function saveMeiOption(e) {
+    e.preventDefault();
+    const id = document.getElementById('mei-id').value;
+    
+    const option = {
+        id: id || 'mei_' + Date.now(),
+        year: parseInt(document.getElementById('mei-year').value),
+        salary: parseFloat(document.getElementById('mei-salary').value),
+        inssRate: parseFloat(document.getElementById('mei-inss-rate').value),
+        icms: parseFloat(document.getElementById('mei-icms').value),
+        iss: parseFloat(document.getElementById('mei-iss').value)
+    };
+
+    const idx = id ? appData.meiOptions.findIndex(o => o.id === id) : -1;
+    if(idx >= 0) appData.meiOptions[idx] = option; else appData.meiOptions.push(option);
+    
+    saveData();
+    closeModal('modal-mei');
+    renderMeiOptions();
+}
+
+function deleteMeiOption(id) {
+    if(confirm('Excluir este parâmetro MEI?')) {
+        appData.meiOptions = appData.meiOptions.filter(o => o.id !== id);
+        saveData();
+        renderMeiOptions();
+    }
+}
+
+// --- BACKUP & RESTORE FIX (Função Corrigida com Blob) ---
+function downloadBackup() {
+    try {
+        // Formata o JSON para ficar legível
+        const dataStr = JSON.stringify(appData, null, 2);
+        
+        // Cria um Blob em vez de usar data URI para evitar limites
+        const blob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", url);
+        downloadAnchorNode.setAttribute("download", "backup_mei_" + new Date().toISOString().split('T')[0] + ".json");
+        
+        document.body.appendChild(downloadAnchorNode); // Required for firefox
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+        
+        // Libera a memória
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        console.error("Erro ao gerar backup:", e);
+        alert("Não foi possível gerar o arquivo de backup. Verifique o console.");
+    }
+}
+
+function restoreBackup(input) {
+    const file = input.files[0];
+    if(!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        try {
+            const json = JSON.parse(e.target.result);
+            if(json && json.users) {
+                appData = json;
+                await DataManager.save(appData);
+                alert("Backup restaurado com sucesso! A página será recarregada.");
+                location.reload();
+            } else {
+                alert("Arquivo de backup inválido.");
+            }
+        } catch(err) {
+            console.error(err);
+            alert("Erro ao ler arquivo de backup.");
+        }
+    };
+    reader.readAsText(file);
 }
 
 function clearLocalData() {
@@ -719,10 +857,61 @@ function openAppointmentModal(appt = null) {
 }
 function fillAppointmentClient() { const c = getUserData().clients.find(x => x.id === document.getElementById('appt-client-select').value); if(c) { document.getElementById('appt-client-name').value=c.name; document.getElementById('appt-client-phone').value=c.phone||''; } }
 function saveAppointment(e) {
-    e.preventDefault(); const id = document.getElementById('appt-id').value;
-    const d = { id: id||'appt_'+Date.now(), title:e.target.elements['appt-title'].value, date:e.target.elements['appt-date'].value, time:e.target.elements['appt-time'].value, client_name:document.getElementById('appt-client-name').value, client_phone:document.getElementById('appt-client-phone').value, service_desc:document.getElementById('appt-desc').value, value:document.getElementById('appt-value').value||0, status:document.getElementById('appt-status').value, pay_method:document.getElementById('appt-pay-method').value, pay_status:document.getElementById('appt-pay-status').value, obs:document.getElementById('appt-obs').value };
-    const l = getUserData().appointments; if(id) { const i=l.findIndex(x=>x.id===id); if(i!==-1)l[i]=d; } else l.push(d);
-    saveData(); closeModal('modal-appointment'); renderAgenda();
+    e.preventDefault(); 
+    const id = document.getElementById('appt-id').value;
+    
+    // 1. Detect Previous Status (for Integration Check)
+    let previousPayStatus = 'pendente';
+    const l = getUserData().appointments;
+    if(id) {
+        const existing = l.find(x => x.id === id);
+        if(existing) previousPayStatus = existing.pay_status;
+    }
+
+    // 2. Construct Data Object
+    const d = { 
+        id: id||'appt_'+Date.now(), 
+        title:e.target.elements['appt-title'].value, 
+        date:e.target.elements['appt-date'].value, 
+        time:e.target.elements['appt-time'].value, 
+        client_name:document.getElementById('appt-client-name').value, 
+        client_phone:document.getElementById('appt-client-phone').value, 
+        service_desc:document.getElementById('appt-desc').value, 
+        value:document.getElementById('appt-value').value||0, 
+        status:document.getElementById('appt-status').value, 
+        pay_method:document.getElementById('appt-pay-method').value, 
+        pay_status:document.getElementById('appt-pay-status').value, 
+        obs:document.getElementById('appt-obs').value 
+    };
+
+    // 3. Save to List
+    if(id) { 
+        const i=l.findIndex(x=>x.id===id); 
+        if(i!==-1)l[i]=d; 
+    } else { 
+        l.push(d); 
+    }
+
+    // 4. Integration Logic: Agenda -> Financeiro
+    if(d.pay_status === 'pago' && previousPayStatus !== 'pago') {
+        if(confirm("Pagamento registrado. Deseja gerar o lançamento no Financeiro agora?")) {
+            const trans = {
+                id: 't_auto_' + Date.now(),
+                type: 'receita',
+                category: 'Prestação de Serviços',
+                value: parseFloat(d.value),
+                date: d.date,
+                entity: d.client_name,
+                obs: 'Gerado via Agenda: ' + d.title
+            };
+            if(!getUserData().transactions) getUserData().transactions = [];
+            getUserData().transactions.push(trans);
+        }
+    }
+
+    saveData(); 
+    closeModal('modal-appointment'); 
+    renderAgenda();
 }
 function editAppointment(id) { const a = getUserData().appointments.find(x => x.id === id); if(a) openAppointmentModal(a); }
 function deleteAppointment(id) { if(confirm('Excluir?')) { const l = getUserData().appointments; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderAgenda(); } }
@@ -1054,6 +1243,122 @@ function renderListingTable() {
     
     if (rows.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5" class="text-center p-4">Nenhum registro encontrado para este filtro.</td></tr>';
+    }
+}
+
+// --- FUNÇÕES FISCAL & IRRF (ADICIONADAS PARA TABELA) ---
+function renderIrrf() {
+    const tbody = document.getElementById('irrf-table-body');
+    tbody.innerHTML = '';
+    // Garante que usa os padrões 2025 se vazio
+    if(!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
+
+    appData.irrfTable.sort((a,b) => a.max - b.max).forEach(row => {
+        const maxDisplay = row.max > 900000 ? 'Acima' : `R$ ${row.max.toFixed(2)}`;
+        tbody.innerHTML += `
+            <tr>
+                <td>${maxDisplay}</td>
+                <td>${row.rate}%</td>
+                <td>R$ ${row.deduction.toFixed(2)}</td>
+                <td>
+                    <button class="action-btn btn-warning" onclick="openIrrfModal('${row.id}')">✏️</button>
+                    <button class="action-btn btn-danger" onclick="deleteIrrfRow('${row.id}')">🗑️</button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+function openIrrfModal(id=null) {
+    document.getElementById('form-irrf').reset();
+    if(id) {
+        const r = appData.irrfTable.find(x => x.id === id);
+        document.getElementById('irrf-id').value = r.id;
+        document.getElementById('irrf-max').value = r.max;
+        document.getElementById('irrf-rate').value = r.rate;
+        document.getElementById('irrf-deduction').value = r.deduction;
+    } else {
+        document.getElementById('irrf-id').value = '';
+    }
+    document.getElementById('modal-irrf').classList.remove('hidden');
+}
+
+function saveIrrfRow(e) {
+    e.preventDefault();
+    const id = document.getElementById('irrf-id').value;
+    const row = {
+        id: id || 'irrf_'+Date.now(),
+        max: parseFloat(document.getElementById('irrf-max').value),
+        rate: parseFloat(document.getElementById('irrf-rate').value),
+        deduction: parseFloat(document.getElementById('irrf-deduction').value)
+    };
+    const list = appData.irrfTable;
+    const idx = id ? list.findIndex(x => x.id === id) : -1;
+    if(idx !== -1) list[idx] = row; else list.push(row);
+    saveData();
+    closeModal('modal-irrf');
+    renderIrrf();
+}
+
+function deleteIrrfRow(id) {
+    if(confirm('Excluir?')) {
+        appData.irrfTable = appData.irrfTable.filter(x => x.id !== id);
+        saveData();
+        renderIrrf();
+    }
+}
+
+// --- MEI FISCAL CALCULATION (NOVA FUNÇÃO) ---
+function renderMeiFiscalCalculations() {
+    // Parâmetros 2025
+    const salaryBase = 1620.99;
+    const inssVal = salaryBase * 0.05; // 5%
+    const icmsVal = 1.00;
+    const issVal = 5.00;
+
+    // 1. Renderizar Tabela de Encargos (Cálculo)
+    const tbodyTax = document.getElementById('mei-tax-body');
+    if (tbodyTax) {
+        tbodyTax.innerHTML = '';
+        
+        const scenarios = [
+            { label: 'Comércio / Indústria', fixed: icmsVal, total: inssVal + icmsVal },
+            { label: 'Serviços', fixed: issVal, total: inssVal + issVal },
+            { label: 'Comércio + Serviços', fixed: icmsVal + issVal, total: inssVal + icmsVal + issVal }
+        ];
+
+        scenarios.forEach(sc => {
+            tbodyTax.innerHTML += `
+                <tr>
+                    <td>${sc.label}</td>
+                    <td>R$ ${inssVal.toFixed(2)}</td>
+                    <td>R$ ${sc.fixed.toFixed(2)}</td>
+                    <td class="font-bold text-primary">R$ ${sc.total.toFixed(2)}</td>
+                </tr>
+            `;
+        });
+    }
+
+    // 2. Renderizar Tabela de Percentual Efetivo
+    // Usaremos o valor Comércio + Serviços como referência de segurança para o cálculo do %
+    const dasRef = inssVal + icmsVal + issVal; 
+    
+    const tbodyEff = document.getElementById('mei-effective-body');
+    if (tbodyEff) {
+        tbodyEff.innerHTML = '';
+        
+        const revenues = [1000, 3000, 6000];
+        
+        revenues.forEach(rev => {
+            const effectiveRate = (dasRef / rev) * 100;
+            tbodyEff.innerHTML += `
+                <tr>
+                    <td>R$ ${rev.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
+                    <td>R$ ${dasRef.toFixed(2)}</td>
+                    <td><strong>${effectiveRate.toFixed(2)}%</strong></td>
+                </tr>
+            `;
+        });
     }
 }
 

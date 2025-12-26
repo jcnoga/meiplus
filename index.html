@@ -1,13 +1,9 @@
 <!DOCTYPE html>
-<!-- 
-    GESTOR MEI - VERSÃO V12.4 (EXCLUSÃO DADOS LOCAIS)
-    ESTRUTURA: HTML
--->
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor MEI - Sistema Híbrido V12.4</title>
+    <title>Gestor MEI - Sistema Híbrido V12.5</title>
     
     <!-- CSS Link -->
     <link rel="stylesheet" href="style.css">
@@ -17,9 +13,8 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
-    <!-- BIBLIOTECAS DE EXPORTAÇÃO (Melhor qualidade PDF/DOCX) -->
+    <!-- BIBLIOTECAS DE EXPORTAÇÃO -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    <!-- docx.js para geração de Word real -->
     <script src="https://unpkg.com/docx@7.1.0/build/index.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
@@ -36,7 +31,6 @@
                 <button type="submit" class="btn-primary w-full">Entrar</button>
                 <div class="mt-4 flex flex-col gap-2">
                     <button type="button" class="btn-outline w-full" onclick="toggleAuth('register')">Criar Conta (90 dias grátis)</button>
-                    <!-- Google Auth Integration Hook -->
                     <button type="button" class="google-btn w-full" onclick="handleGoogleLogin()">Entrar com Google</button>
                     <a href="#" onclick="alert('Simulação: Link de recuperação enviado para o e-mail!')" class="text-center text-sm text-primary mt-2">Esqueci minha senha</a>
                 </div>
@@ -70,9 +64,7 @@
                     <span id="sync-indicator" class="sync-status sync-offline" title="Offline / Local"></span>
                     <span id="user-name-display">Usuário</span>
                 </p>
-                <!-- Botão de Sincronização Voluntária -->
                 <button onclick="forceCloudSync()" class="btn-info text-sm w-full mt-2" style="padding: 0.3rem;">☁️ Sincronizar Nuvem</button>
-                
                 <p id="license-days-display" class="text-success text-sm mt-2">Licença Ativa</p>
                 <button onclick="logout()" class="text-danger text-sm mt-2 w-full text-left" style="background: rgba(220, 38, 38, 0.1); border-radius: 4px; padding: 0.5rem; text-align: center;">🚪 Sair / Logout</button>
             </div>
@@ -308,6 +300,54 @@
                     <div class="flex justify-between items-center mb-2"><h3>Tabela IRRF</h3><button class="btn-info action-btn" onclick="openIrrfModal()">+ Faixa</button></div>
                     <div class="table-container mt-2"><table id="irrf-table-display"><thead><tr><th>Até Base (R$)</th><th>%</th><th>Dedução</th><th>X</th></tr></thead><tbody id="irrf-table-body"></tbody></table></div>
                 </div>
+
+                <!-- NOVO BLOCO: SIMULAÇÃO MEI 2025 -->
+                <div id="mei-fiscal-simulation" class="stat-card mt-4" style="border-left: 5px solid #8b5cf6;">
+                    <h3>📊 Enquadramento MEI 2025</h3>
+                    <p class="text-sm text-light mb-4">Parâmetros de Referência (Base Salário: R$ 1.620,99)</p>
+                    
+                    <div class="flex flex-col md:flex-row gap-4">
+                        <!-- Tabela de Encargos Fixos -->
+                        <div class="w-full">
+                            <h4 class="mb-2 text-primary">Cálculo Mensal (DAS)</h4>
+                            <div class="table-container">
+                                <table style="font-size: 0.9rem;">
+                                    <thead>
+                                        <tr>
+                                            <th>Atividade</th>
+                                            <th>INSS (5%)</th>
+                                            <th>ICMS/ISS</th>
+                                            <th>Total Estimado</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="mei-tax-body">
+                                        <!-- Preenchido via JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Tabela de Percentual Efetivo -->
+                        <div class="w-full">
+                            <h4 class="mb-2 text-primary">Percentual Efetivo (Estimado)</h4>
+                            <div class="table-container">
+                                <table style="font-size: 0.9rem;">
+                                    <thead>
+                                        <tr>
+                                            <th>Faturamento</th>
+                                            <th>Valor DAS (Ref)</th>
+                                            <th>% Efetivo</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="mei-effective-body">
+                                        <!-- Preenchido via JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- FIM DO NOVO BLOCO -->
             </section>
 
             <!-- View: Configurações -->
@@ -354,6 +394,22 @@
                         <button type="submit" class="btn-primary mt-2">Salvar Dados</button>
                     </form>
                 </div>
+
+                <!-- Gestão de MEI (NOVO) -->
+                <div class="stat-card mb-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3>Parâmetros de Tributação MEI</h3>
+                        <button class="btn-primary action-btn" onclick="openMeiModal()">+ Novo</button>
+                    </div>
+                    <p class="text-sm text-light mb-2">Referência 2025: Salário R$ 1.620,99 | INSS 5% | ICMS R$ 1,00 | ISS R$ 5,00</p>
+                    <div class="table-container">
+                        <table id="mei-options-table">
+                            <thead><tr><th>Ano</th><th>Salário Base</th><th>Estimativa DAS (Com+Serv)</th><th>Ações</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <div class="stat-card mb-4">
                     <h3>💾 Backup & Sincronização</h3>
                     <div class="flex gap-4 mt-2 items-center flex-wrap">
@@ -413,6 +469,23 @@
                 <label>%</label><input type="number" step="0.01" id="irrf-rate" required>
                 <label>Dedução</label><input type="number" step="0.01" id="irrf-deduction" required>
                 <div class="flex gap-2 mt-4"><button type="button" class="btn-outline w-full" onclick="closeModal('modal-irrf')">Cancelar</button><button type="submit" class="btn-primary w-full">Salvar</button></div>
+            </form>
+        </div>
+    </div>
+
+    <div id="modal-mei" class="modal-overlay hidden">
+        <div class="modal">
+            <h2>Parâmetro MEI</h2>
+            <form id="form-mei" onsubmit="saveMeiOption(event)">
+                <input type="hidden" id="mei-id">
+                <label>Ano de Referência</label><input type="number" id="mei-year" required placeholder="Ex: 2025">
+                <label>Salário Mínimo (R$)</label><input type="number" step="0.01" id="mei-salary" required placeholder="1620.99">
+                <label>Alíquota INSS (%)</label><input type="number" step="0.1" id="mei-inss-rate" value="5" required>
+                <div class="flex gap-2">
+                    <div class="w-full"><label>ICMS Fixo (R$)</label><input type="number" step="0.01" id="mei-icms" value="1.00" required></div>
+                    <div class="w-full"><label>ISS Fixo (R$)</label><input type="number" step="0.01" id="mei-iss" value="5.00" required></div>
+                </div>
+                <div class="flex gap-2 mt-4"><button type="button" class="btn-outline w-full" onclick="closeModal('modal-mei')">Cancelar</button><button type="submit" class="btn-primary w-full">Salvar</button></div>
             </form>
         </div>
     </div>
