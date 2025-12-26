@@ -10,13 +10,19 @@ const LIC_YEAR_BASE = 1954;
 
 // Configuração Firebase
 const firebaseConfig = {
-    apiKey: "AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo",
-    authDomain: "projeto-bfed3.firebaseapp.com",
-    projectId: "projeto-bfed3",
-    storageBucket: "projeto-bfed3.firebasestorage.app",
-    messagingSenderId: "785289237066",
-    appId: "1:785289237066:web:11fdd8f617a65911d5ccb3"
+  apiKey: "AIzaSyCerSaKRXj6GDQ9pcFVzQbPJU3g46gTRD8",
+  authDomain: "mei-appx-33108.firebaseapp.com",
+  projectId: "mei-appx-33108",
+  storageBucket: "mei-appx-33108.firebasestorage.app",
+  messagingSenderId: "840481517794",
+  appId: "1:840481517794:web:30abec8602381ebe81eebb",
+  measurementId: "G-5XW7S7K7FE"
 };
+
+// --- VARIÁVEIS GLOBAIS FIREBASE (Instância Isolada "mei-appx") ---
+let meiApp = null;
+let meiAuth = null;
+let meiDb = null;
 
 // --- GESTOR DE DADOS HÍBRIDO (IndexedDB + Firebase + LocalStorage) ---
 const DataManager = {
@@ -53,12 +59,13 @@ const DataManager = {
     },
 
     async syncToCloud(data) {
-        if (typeof firebase !== 'undefined' && firebase.apps.length && data.currentUser) {
+        // Usando a instância específica meiDb e garantindo que o usuário está autenticado
+        if (meiDb && data.currentUser) {
             try {
-                const db = firebase.firestore();
                 // Saneamento de dados
                 const cleanData = JSON.parse(JSON.stringify(data));
-                await db.collection('users').doc('u_' + data.currentUser.id.replace('u_', '')).set(cleanData);
+                // Firestore via instância isolada
+                await meiDb.collection('users').doc('u_' + data.currentUser.id.replace('u_', '')).set(cleanData);
                 this.updateSyncStatus(true);
             } catch(e) { 
                 console.error("Cloud Sync Error", e); 
@@ -97,12 +104,51 @@ const DataManager = {
     }
 };
 
-// --- INICIALIZAÇÃO FIREBASE ---
+// --- INICIALIZAÇÃO FIREBASE (Padrão Isolado do Projeto) ---
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
     try {
-        firebase.initializeApp(firebaseConfig);
-        console.log("Firebase Initialized");
-    } catch(e) { console.error("Firebase Init Error", e); }
+        // 1. Inicialização correta por aplicativo (mei-appx)
+        // Verifica se já existe para evitar erro de re-inicialização
+        const existingApp = firebase.apps.find(app => app.name === 'mei-appx');
+        if (existingApp) {
+            meiApp = existingApp;
+        } else {
+            meiApp = firebase.initializeApp(firebaseConfig, "mei-appx");
+        }
+
+        // 2. Utilização explícita da instância de Auth (getAuth(app) equivalente para Compat)
+        meiAuth = meiApp.auth();
+
+        // 3. Instância Firestore isolada
+        meiDb = meiApp.firestore();
+
+        // 4. Configuração de Persistência (Padrão do Projeto)
+        meiAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+            .then(() => {
+                console.log("Persistência de autenticação configurada: LOCAL");
+            })
+            .catch((error) => {
+                console.error("Erro na persistência:", error);
+            });
+
+        // 5. Listener onAuthStateChanged (Propagação de Estado)
+        meiAuth.onAuthStateChanged(async (user) => {
+            if (user) {
+                console.log("onAuthStateChanged: Usuário autenticado (mei-appx):", user.email);
+                await handleFirebaseSessionRestore(user);
+            } else {
+                console.log("onAuthStateChanged: Usuário desconectado.");
+                // Se não houver sessão local manual, garante que a tela de auth seja mostrada
+                if (!sessionStorage.getItem('mei_user_id')) {
+                    showAuth();
+                }
+            }
+        });
+
+        console.log("Firebase 'mei-appx' Initialized Successfully");
+    } catch(e) { 
+        console.error("Firebase Init Error", e); 
+    }
 }
 
 // --- VARIÁVEIS DE ESTADO ---
@@ -142,12 +188,50 @@ async function init() {
         if(appData.currentUser) await DataManager.save(appData);
     });
 
+    // Verificação de sessão (Fallback Local se o Listener do Firebase demorar ou estiver offline)
     const sessionUser = sessionStorage.getItem('mei_user_id');
     if (sessionUser) {
         const user = appData.users.find(u => u.id === sessionUser);
         if (user) { loginUser(user); return; }
     }
-    showAuth();
+    
+    // O onAuthStateChanged tratará o login se houver sessão Firebase ativa
+    // Caso contrário, showAuth() será chamado ou mantido
+}
+
+// Função auxiliar para restaurar sessão via Firebase Listener
+async function handleFirebaseSessionRestore(firebaseUser) {
+    // Tenta encontrar o usuário nos dados locais carregados
+    let appUser = appData.users.find(u => u.email === firebaseUser.email);
+    
+    if (appUser) {
+        // Usuário existe localmente, faz o login
+        if (appData.currentUser?.id !== appUser.id) {
+            loginUser(appUser);
+        }
+    } else {
+        // Usuário autenticado no Firebase mas não existe localmente (ex: limpou cache)
+        // Tenta buscar do Cloud (Firestore) usando a instância correta (meiDb)
+        if (meiDb) {
+            try {
+                const docId = 'u_' + firebaseUser.uid;
+                const docSnap = await meiDb.collection('users').doc(docId).get();
+                if (docSnap.exists) {
+                    const cloudData = docSnap.data();
+                    if (cloudData) {
+                        appData = cloudData; // Atualiza estado local com dados da nuvem
+                        await DataManager.save(appData); // Salva no local
+                        
+                        // Re-busca o usuário
+                        appUser = appData.users.find(u => u.email === firebaseUser.email);
+                        if (appUser) loginUser(appUser);
+                    }
+                }
+            } catch(e) {
+                console.error("Erro ao restaurar sessão da nuvem:", e);
+            }
+        }
+    }
 }
 
 function showAuth() { document.getElementById('auth-screen').classList.remove('hidden'); document.getElementById('app-container').classList.add('hidden'); }
@@ -183,31 +267,50 @@ function loginUser(user) {
     saveData(); 
 }
 
-function logout() { appData.currentUser = null; sessionStorage.removeItem('mei_user_id'); location.reload(); }
+function logout() { 
+    appData.currentUser = null; 
+    sessionStorage.removeItem('mei_user_id'); 
+    
+    // Logout da instância específica de autenticação
+    if (meiAuth) {
+        meiAuth.signOut().then(() => {
+            console.log("Firebase Signed Out (mei-appx)");
+            location.reload();
+        }).catch((e) => {
+            console.error("Sign Out Error", e);
+            location.reload();
+        });
+    } else {
+        location.reload(); 
+    }
+}
 
 function toggleAuth(screen) {
     document.getElementById('login-form').classList.toggle('hidden', screen === 'register');
     document.getElementById('register-form').classList.toggle('hidden', screen !== 'register');
 }
 
-// LOGIN GOOGLE
+// LOGIN GOOGLE (Atualizado para Padrão do Projeto)
 async function handleGoogleLogin() {
-    if (!firebaseConfig.apiKey) {
+    if (!firebaseConfig.apiKey || !meiAuth) {
         alert('Simulação: Login com Google realizado! (Configure as chaves do Firebase para ativar)');
         return;
     }
+    
+    // Usa a instância de Auth específica do mei-appx
     const provider = new firebase.auth.GoogleAuthProvider();
     
     try {
-        const result = await firebase.auth().signInWithPopup(provider);
+        const result = await meiAuth.signInWithPopup(provider);
         const user = result.user;
-        const db = firebase.firestore();
         const docId = 'u_' + user.uid;
 
-        // 1. Verificação de cadastro na nuvem
+        // 1. Verificação de cadastro na nuvem (usando meiDb isolado)
         let docSnap;
         try {
-            docSnap = await db.collection('users').doc(docId).get();
+            if (meiDb) {
+                docSnap = await meiDb.collection('users').doc(docId).get();
+            }
         } catch(e) {
             console.warn("Erro ao verificar nuvem:", e);
         }
