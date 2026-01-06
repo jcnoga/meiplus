@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor MEI - Sistema Híbrido V12.5</title>
+    <title>Gestor MEI - Sistema Híbrido V13.0</title>
+    
+    <!-- PWA Manifest & Theme -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2563eb">
     
     <!-- CSS Link -->
     <link rel="stylesheet" href="style.css">
@@ -528,5 +532,16 @@
     
     <!-- JS Logic -->
     <script src="script.js"></script>
+
+    <!-- PWA Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('Service Worker registrado:', reg.scope))
+                    .catch(err => console.error('Falha no SW:', err));
+            });
+        }
+    </script>
 </body>
 </html>

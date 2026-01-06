@@ -57,7 +57,7 @@ const DataManager = {
     },
 
     async syncToCloud(data) {
-        // CORREÇÃO DE PERMISSÃO: Só tenta sincronizar se o Firebase estiver iniciado E houver usuário autenticado no Auth
+        // CORREÇÃO: Utiliza persistência do SDK para gerenciar fila offline/online automaticamente
         if (typeof firebase !== 'undefined' && firebase.apps.length && data.currentUser) {
             const authUser = firebase.auth().currentUser;
             
@@ -66,16 +66,22 @@ const DataManager = {
                     const db = firebase.firestore();
                     // Saneamento de dados
                     const cleanData = JSON.parse(JSON.stringify(data));
-                    // Usa o ID do documento baseado no ID do Auth para garantir permissão
+                    
+                    // A gravação ocorre localmente no cache do Firebase e sincroniza quando houver rede
                     await db.collection('users').doc('u_' + authUser.uid).set(cleanData);
-                    this.updateSyncStatus(true);
+                    
+                    // Atualiza status visual baseado na conectividade atual do navegador
+                    if (navigator.onLine) {
+                        this.updateSyncStatus(true);
+                    } else {
+                        // Visualmente offline, mas salvo na fila de persistência
+                        this.updateSyncStatus(false);
+                    }
                 } catch(e) { 
-                    console.error("Cloud Sync Error (Permissões ou Rede):", e.message); 
+                    console.error("Cloud Sync Error (Permissões ou Fila):", e.message); 
                     this.updateSyncStatus(false);
                 }
             } else {
-                // Modo offline/local apenas (não é um erro, é um estado)
-                // console.log("Usuário não autenticado no Firebase. Sincronização em nuvem pausada.");
                 this.updateSyncStatus(false);
             }
         } else {
@@ -106,20 +112,32 @@ const DataManager = {
         const el = document.getElementById('sync-indicator');
         if(el) {
             el.className = `sync-status ${isOnline ? 'sync-online' : 'sync-offline'}`;
-            el.title = isOnline ? 'Sincronizado (Nuvem)' : 'Modo Offline (Local)';
+            el.title = isOnline ? 'Sincronizado (Nuvem)' : 'Modo Offline (Local/Fila)';
         }
     }
 };
 
-// --- INICIALIZAÇÃO FIREBASE ---
+// --- INICIALIZAÇÃO FIREBASE (COM PERSISTÊNCIA OFFLINE) ---
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
     try {
         firebase.initializeApp(firebaseConfig);
-        console.log("Firebase Initialized");
+        
+        // Habilitar persistência offline do Firestore
+        firebase.firestore().enablePersistence()
+            .catch((err) => {
+                if (err.code == 'failed-precondition') {
+                    console.warn('Persistência falhou: Múltiplas abas abertas.');
+                } else if (err.code == 'unimplemented') {
+                    console.warn('Navegador não suporta persistência offline.');
+                }
+            });
+
+        console.log("Firebase Initialized with Offline Support");
         
         // Listener de Auth para sincronizar estado
         firebase.auth().onAuthStateChanged((user) => {
             if (user && appData.currentUser) {
+                // Ao detectar usuário, garante que o sync ocorra (fila ou rede)
                 DataManager.syncToCloud(appData);
             }
         });
@@ -194,11 +212,20 @@ async function init() {
         ];
     }
 
-    // Monitor de Conectividade para Sincronização Automática
-    window.addEventListener('online', async () => {
-        console.log("Conexão restaurada. Sincronizando com a nuvem...");
-        if(appData.currentUser) await DataManager.save(appData);
+    // Monitor de Conectividade Global e Atualização de UI
+    window.addEventListener('online', () => {
+        console.log("Conexão restaurada. Sincronizando...");
+        DataManager.updateSyncStatus(true);
+        if(appData.currentUser) DataManager.save(appData); // Dispara a fila do Firebase
     });
+
+    window.addEventListener('offline', () => {
+        console.log("Modo Offline Ativo.");
+        DataManager.updateSyncStatus(false);
+    });
+
+    // Seta status inicial
+    DataManager.updateSyncStatus(navigator.onLine);
 
     const sessionUser = sessionStorage.getItem('mei_user_id');
     if (sessionUser) {
@@ -224,7 +251,12 @@ function forceCloudSync() {
         setTimeout(() => {
             btn.innerText = originalText;
             btn.disabled = false;
-            alert("Sincronização com a nuvem processada (verifique indicador).");
+            // Se estiver online, ok. Se offline, vai para fila.
+            if(navigator.onLine) {
+                alert("Sincronização com a nuvem processada.");
+            } else {
+                alert("Sem internet. Dados salvos localmente e agendados para envio.");
+            }
         }, 1000);
     });
 }
@@ -304,7 +336,7 @@ async function handleGoogleLogin() {
         try {
             docSnap = await db.collection('users').doc(docId).get();
         } catch(e) {
-            console.warn("Erro ao verificar nuvem:", e);
+            console.warn("Erro ao verificar nuvem (provavelmente offline):", e);
         }
 
         if (docSnap && docSnap.exists) {
@@ -447,12 +479,13 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             const docId = 'u_' + userCred.user.uid;
             
             try {
+                // Tenta buscar (se offline, busca no cache persistente)
                 const docSnap = await db.collection('users').doc(docId).get();
                 if (docSnap.exists) {
                     appData = docSnap.data();
                     await DataManager.save(appData); // Atualiza local
                 }
-            } catch(e) { console.warn("Erro sync login:", e); }
+            } catch(e) { console.warn("Erro sync login (possível offline):", e); }
             
         } catch (error) {
             console.warn("Firebase Auth falhou (tentando login local):", error.message);
