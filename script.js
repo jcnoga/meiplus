@@ -3,6 +3,9 @@ const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?Return
 const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
 const DB_KEY = 'MEI_SYSTEM_V11';
 
+// Senha de app Firebase:  weut orgp sdej pusl
+
+
 // Constantes da Licença
 const LIC_PAD_VAL = 13;
 const LIC_MULT_FACTOR = 9;
@@ -10,19 +13,14 @@ const LIC_YEAR_BASE = 1954;
 
 // Configuração Firebase
 const firebaseConfig = {
-  apiKey: "AIzaSyCerSaKRXj6GDQ9pcFVzQbPJU3g46gTRD8",
-  authDomain: "mei-appx-33108.firebaseapp.com",
-  projectId: "mei-appx-33108",
-  storageBucket: "mei-appx-33108.firebasestorage.app",
-  messagingSenderId: "840481517794",
-  appId: "1:840481517794:web:30abec8602381ebe81eebb",
-  measurementId: "G-5XW7S7K7FE"
+  apiKey: "AIzaSyBdFZ09MoPhwr24bLU8Ts7DBTkkfsApIK8",
+  authDomain: "mei-pro-1376f.firebaseapp.com",
+  projectId: "mei-pro-1376f",
+  storageBucket: "mei-pro-1376f.firebasestorage.app",
+  messagingSenderId: "327978602244",
+  appId: "1:327978602244:web:9617133b6edcf598eb4a51",
+  measurementId: "G-NXB1F7H7EK"
 };
-
-// --- VARIÁVEIS GLOBAIS FIREBASE (Instância Isolada "mei-appx") ---
-let meiApp = null;
-let meiAuth = null;
-let meiDb = null;
 
 // --- GESTOR DE DADOS HÍBRIDO (IndexedDB + Firebase + LocalStorage) ---
 const DataManager = {
@@ -54,21 +52,30 @@ const DataManager = {
             tx.objectStore(this.storeName).put(data, 'main_data');
         } catch(e) { console.error("IDB Error", e); }
 
-        // 3. Firebase (Sincronização opcional/automática)
+        // 3. Firebase (Sincronização com verificação de Auth)
         this.syncToCloud(data);
     },
 
     async syncToCloud(data) {
-        // Usando a instância específica meiDb e garantindo que o usuário está autenticado
-        if (meiDb && data.currentUser) {
-            try {
-                // Saneamento de dados
-                const cleanData = JSON.parse(JSON.stringify(data));
-                // Firestore via instância isolada
-                await meiDb.collection('users').doc('u_' + data.currentUser.id.replace('u_', '')).set(cleanData);
-                this.updateSyncStatus(true);
-            } catch(e) { 
-                console.error("Cloud Sync Error", e); 
+        // CORREÇÃO DE PERMISSÃO: Só tenta sincronizar se o Firebase estiver iniciado E houver usuário autenticado no Auth
+        if (typeof firebase !== 'undefined' && firebase.apps.length && data.currentUser) {
+            const authUser = firebase.auth().currentUser;
+            
+            if (authUser) {
+                try {
+                    const db = firebase.firestore();
+                    // Saneamento de dados
+                    const cleanData = JSON.parse(JSON.stringify(data));
+                    // Usa o ID do documento baseado no ID do Auth para garantir permissão
+                    await db.collection('users').doc('u_' + authUser.uid).set(cleanData);
+                    this.updateSyncStatus(true);
+                } catch(e) { 
+                    console.error("Cloud Sync Error (Permissões ou Rede):", e.message); 
+                    this.updateSyncStatus(false);
+                }
+            } else {
+                // Modo offline/local apenas (não é um erro, é um estado)
+                // console.log("Usuário não autenticado no Firebase. Sincronização em nuvem pausada.");
                 this.updateSyncStatus(false);
             }
         } else {
@@ -104,50 +111,55 @@ const DataManager = {
     }
 };
 
-// --- INICIALIZAÇÃO FIREBASE (Padrão Isolado do Projeto) ---
+// --- INICIALIZAÇÃO FIREBASE ---
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
     try {
-        // 1. Inicialização correta por aplicativo (mei-appx)
-        // Verifica se já existe para evitar erro de re-inicialização
-        const existingApp = firebase.apps.find(app => app.name === 'mei-appx');
-        if (existingApp) {
-            meiApp = existingApp;
-        } else {
-            meiApp = firebase.initializeApp(firebaseConfig, "mei-appx");
-        }
-
-        // 2. Utilização explícita da instância de Auth (getAuth(app) equivalente para Compat)
-        meiAuth = meiApp.auth();
-
-        // 3. Instância Firestore isolada
-        meiDb = meiApp.firestore();
-
-        // 4. Configuração de Persistência (Padrão do Projeto)
-        meiAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
-            .then(() => {
-                console.log("Persistência de autenticação configurada: LOCAL");
-            })
-            .catch((error) => {
-                console.error("Erro na persistência:", error);
-            });
-
-        // 5. Listener onAuthStateChanged (Propagação de Estado)
-        meiAuth.onAuthStateChanged(async (user) => {
-            if (user) {
-                console.log("onAuthStateChanged: Usuário autenticado (mei-appx):", user.email);
-                await handleFirebaseSessionRestore(user);
-            } else {
-                console.log("onAuthStateChanged: Usuário desconectado.");
-                // Se não houver sessão local manual, garante que a tela de auth seja mostrada
-                if (!sessionStorage.getItem('mei_user_id')) {
-                    showAuth();
-                }
+        firebase.initializeApp(firebaseConfig);
+        console.log("Firebase Initialized");
+        
+        // Listener de Auth para sincronizar estado
+        firebase.auth().onAuthStateChanged((user) => {
+            if (user && appData.currentUser) {
+                DataManager.syncToCloud(appData);
             }
         });
+    } catch(e) { console.error("Firebase Init Error", e); }
+}
 
-        console.log("Firebase 'mei-appx' Initialized Successfully");
-    } catch(e) { 
-        console.error("Firebase Init Error", e); 
+// --- SERVIÇO DE E-MAIL ---
+/**
+ * Envia e-mails utilizando a Extensão "Trigger Email" do Firebase.
+ */
+async function sendAutomatedEmail(to, subject, htmlContent, context = 'system') {
+    if (typeof firebase === 'undefined' || !firebase.apps.length) {
+        console.warn("Firebase não inicializado. E-mail não enviado:", subject);
+        return;
+    }
+
+    // CORREÇÃO: Verifica se há usuário autenticado antes de escrever na coleção 'mail'
+    const user = firebase.auth().currentUser;
+    if (!user) {
+        console.warn("Usuário não autenticado no Firebase. E-mail não pode ser enviado devido a regras de segurança.");
+        return;
+    }
+
+    try {
+        const db = firebase.firestore();
+        await db.collection('mail').add({
+            to: to,
+            message: {
+                subject: subject,
+                html: htmlContent
+            },
+            metadata: {
+                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                context: context,
+                userId: user.uid
+            }
+        });
+        console.log(`Solicitação de e-mail (${subject}) enfileirada para: ${to}`);
+    } catch (e) {
+        console.error("Erro ao solicitar envio de e-mail:", e.message);
     }
 }
 
@@ -188,50 +200,12 @@ async function init() {
         if(appData.currentUser) await DataManager.save(appData);
     });
 
-    // Verificação de sessão (Fallback Local se o Listener do Firebase demorar ou estiver offline)
     const sessionUser = sessionStorage.getItem('mei_user_id');
     if (sessionUser) {
         const user = appData.users.find(u => u.id === sessionUser);
         if (user) { loginUser(user); return; }
     }
-    
-    // O onAuthStateChanged tratará o login se houver sessão Firebase ativa
-    // Caso contrário, showAuth() será chamado ou mantido
-}
-
-// Função auxiliar para restaurar sessão via Firebase Listener
-async function handleFirebaseSessionRestore(firebaseUser) {
-    // Tenta encontrar o usuário nos dados locais carregados
-    let appUser = appData.users.find(u => u.email === firebaseUser.email);
-    
-    if (appUser) {
-        // Usuário existe localmente, faz o login
-        if (appData.currentUser?.id !== appUser.id) {
-            loginUser(appUser);
-        }
-    } else {
-        // Usuário autenticado no Firebase mas não existe localmente (ex: limpou cache)
-        // Tenta buscar do Cloud (Firestore) usando a instância correta (meiDb)
-        if (meiDb) {
-            try {
-                const docId = 'u_' + firebaseUser.uid;
-                const docSnap = await meiDb.collection('users').doc(docId).get();
-                if (docSnap.exists) {
-                    const cloudData = docSnap.data();
-                    if (cloudData) {
-                        appData = cloudData; // Atualiza estado local com dados da nuvem
-                        await DataManager.save(appData); // Salva no local
-                        
-                        // Re-busca o usuário
-                        appUser = appData.users.find(u => u.email === firebaseUser.email);
-                        if (appUser) loginUser(appUser);
-                    }
-                }
-            } catch(e) {
-                console.error("Erro ao restaurar sessão da nuvem:", e);
-            }
-        }
-    }
+    showAuth();
 }
 
 function showAuth() { document.getElementById('auth-screen').classList.remove('hidden'); document.getElementById('app-container').classList.add('hidden'); }
@@ -250,9 +224,36 @@ function forceCloudSync() {
         setTimeout(() => {
             btn.innerText = originalText;
             btn.disabled = false;
-            alert("Sincronização com a nuvem solicitada!");
+            alert("Sincronização com a nuvem processada (verifique indicador).");
         }, 1000);
     });
+}
+
+// CORREÇÃO 1: Implementação da função loadFiscalReminders que faltava
+function loadFiscalReminders() {
+    const list = document.getElementById('fiscal-reminders');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    const today = new Date();
+    
+    // Lógica para o dia 20 (DAS)
+    let dasDate = new Date(today.getFullYear(), today.getMonth(), 20);
+    if (today.getDate() > 20) {
+        dasDate.setMonth(dasDate.getMonth() + 1);
+    }
+    
+    // Formatação de data
+    const dateOptions = { day: '2-digit', month: '2-digit' };
+    
+    list.innerHTML += `
+        <li class="mb-2" style="border-bottom: 1px solid var(--border); padding-bottom: 0.25rem;">
+            <strong class="text-primary">DAS Mensal:</strong> Vence em ${dasDate.toLocaleDateString('pt-BR', dateOptions)}
+        </li>
+        <li class="mb-2">
+            <strong class="text-warning">DASN-SIMEI:</strong> Prazo anual 31/05
+        </li>
+    `;
 }
 
 function loginUser(user) {
@@ -263,26 +264,20 @@ function loginUser(user) {
     
     if(!appData.records[user.id].appointments) appData.records[user.id].appointments = [];
     
-    checkLicense(); navTo('dashboard'); loadFiscalReminders();
+    checkLicense(); 
+    navTo('dashboard'); 
+    
+    // Chama a função agora existente
+    loadFiscalReminders();
+    
     saveData(); 
 }
 
 function logout() { 
     appData.currentUser = null; 
     sessionStorage.removeItem('mei_user_id'); 
-    
-    // Logout da instância específica de autenticação
-    if (meiAuth) {
-        meiAuth.signOut().then(() => {
-            console.log("Firebase Signed Out (mei-appx)");
-            location.reload();
-        }).catch((e) => {
-            console.error("Sign Out Error", e);
-            location.reload();
-        });
-    } else {
-        location.reload(); 
-    }
+    if (firebase.auth().currentUser) firebase.auth().signOut();
+    location.reload(); 
 }
 
 function toggleAuth(screen) {
@@ -290,27 +285,24 @@ function toggleAuth(screen) {
     document.getElementById('register-form').classList.toggle('hidden', screen !== 'register');
 }
 
-// LOGIN GOOGLE (Atualizado para Padrão do Projeto)
+// LOGIN GOOGLE
 async function handleGoogleLogin() {
-    if (!firebaseConfig.apiKey || !meiAuth) {
+    if (!firebaseConfig.apiKey) {
         alert('Simulação: Login com Google realizado! (Configure as chaves do Firebase para ativar)');
         return;
     }
-    
-    // Usa a instância de Auth específica do mei-appx
     const provider = new firebase.auth.GoogleAuthProvider();
     
     try {
-        const result = await meiAuth.signInWithPopup(provider);
+        const result = await firebase.auth().signInWithPopup(provider);
         const user = result.user;
+        const db = firebase.firestore();
         const docId = 'u_' + user.uid;
 
-        // 1. Verificação de cadastro na nuvem (usando meiDb isolado)
+        // 1. Verificação de cadastro na nuvem
         let docSnap;
         try {
-            if (meiDb) {
-                docSnap = await meiDb.collection('users').doc(docId).get();
-            }
+            docSnap = await db.collection('users').doc(docId).get();
         } catch(e) {
             console.warn("Erro ao verificar nuvem:", e);
         }
@@ -320,7 +312,9 @@ async function handleGoogleLogin() {
             const cloudData = docSnap.data();
             if(cloudData) {
                 appData = cloudData;
-                await DataManager.save(appData); // Atualiza local
+                // Importante: garante que appData.currentUser está definido antes de salvar
+                appData.currentUser = appData.users.find(u => u.id === docId) || cloudData.currentUser;
+                await DataManager.save(appData); 
             }
         }
         
@@ -345,7 +339,17 @@ async function handleGoogleLogin() {
             appData.records[appUser.id] = createSeedData();
             
             // Cadastro automático na nuvem
+            appData.currentUser = appUser;
             await DataManager.save(appData);
+            
+            // ENVIO AUTOMÁTICO DE E-MAIL
+            // (Agora funciona pois o usuário está autenticado pelo Google)
+            sendAutomatedEmail(
+                appUser.email,
+                "Bem-vindo ao Gestor MEI",
+                `<h3>Olá, ${appUser.name}!</h3><p>Seu cadastro foi realizado com sucesso via Google.</p><p>Sua licença gratuita de 90 dias já está ativa.</p>`,
+                "registration_google"
+            );
         }
         
         // 3. Login
@@ -374,33 +378,114 @@ function createSeedData() {
 }
 
 // Event Listeners Auth
-document.getElementById('register-form').addEventListener('submit', (e) => {
+document.getElementById('register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = document.getElementById('reg-email').value;
-    if (appData.users.find(u => u.email === email)) return alert('E-mail já existe!');
+    const name = document.getElementById('reg-name').value;
+    const password = document.getElementById('reg-password').value;
+    
+    // Verificação local rápida
+    if (appData.users.find(u => u.email === email)) return alert('E-mail já existe (Local)!');
+
+    let newUserId = 'u_' + Date.now();
+    let authSuccess = false;
+
+    // CORREÇÃO: Tentar criar usuário no Firebase Auth para permitir escritas
+    if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
+        try {
+            const userCred = await firebase.auth().createUserWithEmailAndPassword(email, password);
+            newUserId = 'u_' + userCred.user.uid;
+            authSuccess = true;
+        } catch (error) {
+            console.warn("Erro ao criar Auth no Firebase (usando modo offline):", error.message);
+            if(error.code === 'auth/email-already-in-use') {
+                alert("Este e-mail já está em uso no sistema.");
+                return;
+            }
+        }
+    }
     
     const newUser = {
-        id: 'u_' + Date.now(), name: document.getElementById('reg-name').value, email: email,
-        password: document.getElementById('reg-password').value,
+        id: newUserId, 
+        name: name, 
+        email: email,
+        password: password, // Mantém local para fallback offline
         licenseExpire: new Date().getTime() + (90 * 86400000),
         company: { reserve_rate: 10, prolabore_target: 4000 }
     };
+
     appData.users.push(newUser); 
     appData.records[newUser.id] = createSeedData();
-    
-    // Define o contexto do usuário antes de salvar para garantir que o syncToCloud 
-    // tenha o ID correto e persista na nuvem imediatamente após a criação.
     appData.currentUser = newUser;
 
-    saveData(); 
+    await saveData(); 
+    
+    // ENVIO AUTOMÁTICO DE E-MAIL (Só funciona se authSuccess for true)
+    if (authSuccess) {
+        sendAutomatedEmail(
+            email,
+            "Bem-vindo ao Gestor MEI",
+            `<h3>Olá, ${name}!</h3><p>Obrigado por se cadastrar no Gestor MEI.</p><p>Aproveite seus 90 dias de acesso gratuito.</p>`,
+            "registration_manual"
+        );
+    }
+
     loginUser(newUser);
 });
 
-document.getElementById('login-form').addEventListener('submit', (e) => {
+document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const user = appData.users.find(u => u.email === document.getElementById('login-email').value && u.password === document.getElementById('login-password').value);
-    user ? loginUser(user) : alert('Erro no login');
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    
+    // CORREÇÃO: Tentar autenticar no Firebase Auth primeiro
+    if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
+        try {
+            const userCred = await firebase.auth().signInWithEmailAndPassword(email, password);
+            // Login no Firebase com sucesso, buscar dados da nuvem se possível
+            const db = firebase.firestore();
+            const docId = 'u_' + userCred.user.uid;
+            
+            try {
+                const docSnap = await db.collection('users').doc(docId).get();
+                if (docSnap.exists) {
+                    appData = docSnap.data();
+                    await DataManager.save(appData); // Atualiza local
+                }
+            } catch(e) { console.warn("Erro sync login:", e); }
+            
+        } catch (error) {
+            console.warn("Firebase Auth falhou (tentando login local):", error.message);
+        }
+    }
+
+    // Login Local (Fallback ou pós-sync)
+    const user = appData.users.find(u => u.email === email && u.password === password);
+    if(user) {
+        loginUser(user);
+    } else {
+        alert('Erro no login: Usuário não encontrado ou senha incorreta.');
+    }
 });
+
+// Integração de Recuperação de Senha com E-mail
+document.querySelector('#login-form a').onclick = function(e) {
+    e.preventDefault();
+    const emailInput = document.getElementById('login-email').value;
+    if (emailInput && emailInput.includes('@')) {
+        // Tenta usar o reset do Firebase se disponível
+        if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
+            firebase.auth().sendPasswordResetEmail(emailInput)
+                .then(() => alert('Link de recuperação enviado pelo Firebase para seu e-mail.'))
+                .catch((e) => alert('Erro: ' + e.message));
+        } else {
+             // Fallback para o sistema de email trigger (se já logado, o que é raro aqui)
+            alert('Configuração de e-mail pendente. Entre em contato com o suporte.');
+        }
+    } else {
+        alert('Por favor, preencha o campo de e-mail antes de clicar em "Esqueci minha senha".');
+    }
+};
 
 // --- NAVEGAÇÃO ---
 function navTo(viewId) {
@@ -1013,6 +1098,18 @@ function saveAppointment(e) {
     }
 
     saveData(); 
+    
+    // ENVIO AUTOMÁTICO DE E-MAIL
+    const clientEmail = getUserData().clients.find(c => c.name === d.client_name)?.email;
+    if (clientEmail) {
+        sendAutomatedEmail(
+            clientEmail,
+            "Confirmação de Agendamento - Gestor MEI",
+            `<h3>Olá, ${d.client_name}!</h3><p>Seu agendamento <strong>${d.title}</strong> foi confirmado para ${d.date.split('-').reverse().join('/')} às ${d.time}.</p><p>Valor: R$ ${parseFloat(d.value).toFixed(2)}</p>`,
+            "appointment_confirmation"
+        );
+    }
+    
     closeModal('modal-appointment'); 
     renderAgenda();
 }
@@ -1469,6 +1566,26 @@ function getUserData() { return appData.records[appData.currentUser.id]; }
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 function checkLicense() { const d = Math.ceil((appData.currentUser.licenseExpire - Date.now())/86400000); document.getElementById('license-days-display').innerText = d>0?d+' dias':'Expirado'; document.getElementById('license-warning').classList.toggle('hidden', d>0); }
 function generateLicenseCode() { document.getElementById('license-random-code').value = Math.floor(Math.random()*900)+100; }
+
+// --- FUNÇÕES FALTANTES (CORREÇÃO DE REFERENCE ERROR) ---
+function sendWhatsApp() {
+    const phone = appData.currentUser?.company?.phone || '';
+    const text = "Olá, gostaria de renovar minha licença.";
+    window.open(`https://wa.me/55${phone.replace(/\D/g,'')}?text=${encodeURIComponent(text)}`, '_blank');
+}
+
+function validateLicense() {
+    const input = document.getElementById('license-key-input').value;
+    // Validação simulada
+    if (input) {
+        alert("Validação simulada com sucesso! Licença estendida.");
+        appData.currentUser.licenseExpire = Date.now() + (90 * 86400000); // +90 dias
+        checkLicense();
+        saveData();
+    } else {
+        alert("Digite um código de validação.");
+    }
+}
         
 // Inicializa a aplicação
 init();
