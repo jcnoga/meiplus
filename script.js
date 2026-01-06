@@ -568,11 +568,21 @@ function loadSettings() {
     // Carregar Opções MEI
     renderMeiOptions();
 
-    // Lógica Admin para jcnvap@gmail.com (Corrigido para case-insensitive)
-    if(appData.currentUser.email && appData.currentUser.email.toLowerCase() === 'jcnvap@gmail.com') {
-        document.getElementById('admin-panel').classList.remove('hidden');
-    } else {
-        document.getElementById('admin-panel').classList.add('hidden');
+    // LOGICA ADMIN ROBUSTA (Corrigida e Melhorada)
+    const adminPanel = document.getElementById('admin-panel');
+    if (adminPanel) {
+        // Normalização: Trim e Lowercase para evitar erros de digitação/espaços
+        const userEmail = appData.currentUser && appData.currentUser.email ? appData.currentUser.email.toLowerCase().trim() : '';
+        const isAdmin = (userEmail === 'jcnvap@gmail.com');
+
+        if(isAdmin) {
+            adminPanel.classList.remove('hidden');
+            // Força display via style para garantir visibilidade contra CSS conflitante
+            adminPanel.style.display = 'block';
+        } else {
+            adminPanel.classList.add('hidden');
+            adminPanel.style.display = 'none';
+        }
     }
 }
 
@@ -838,20 +848,25 @@ function runQualityCheck() {
     alert(log.length === 0 ? "✅ Nenhuma inconsistência encontrada." : "⚠️ Relatório:\n\n" + log.join("\n"));
 }
 
-// --- FUNÇÃO DE TESTE DE E-MAIL (ADMIN) - NOVA ADIÇÃO ---
+// --- FUNÇÃO DE TESTE DE E-MAIL (ADMIN) - ROBUSTA ---
 async function sendTestEmail() {
-    // Verificação de segurança (case insensitive)
-    if (!appData.currentUser || !appData.currentUser.email || appData.currentUser.email.toLowerCase() !== 'jcnvap@gmail.com') {
+    // Verificação de segurança robusta (case insensitive e trim)
+    const userEmail = appData.currentUser && appData.currentUser.email ? appData.currentUser.email.toLowerCase().trim() : '';
+    
+    if (userEmail !== 'jcnvap@gmail.com') {
         alert("Acesso negado: Apenas o administrador pode executar este teste.");
         return;
     }
 
     const btn = document.activeElement; 
-    const originalText = btn.innerText;
+    let originalText = "Enviar E-mail de Teste";
+    if(btn) originalText = btn.innerText;
     
     try {
-        btn.innerText = "Enviando...";
-        btn.disabled = true;
+        if(btn) {
+            btn.innerText = "Enviando...";
+            btn.disabled = true;
+        }
 
         await sendAutomatedEmail(
             appData.currentUser.email,
@@ -1453,196 +1468,6 @@ function saveCrudItem(e) {
     const l = getUserData()[currentCrudType]; const idx = l.findIndex(x => x.id === id); idx !== -1 ? l[idx] = i : l.push(i); saveData(); closeModal('modal-crud'); renderCrud(currentCrudType); 
 }
 function deleteCrudItem(t,id){ if(confirm('Apagar?')){const l=getUserData()[t]; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderCrud(t);} }
-
-// --- LISTAGENS (Correção Solicitada) ---
-function switchListing(type) {
-    currentListingType = type;
-    
-    // Atualiza botões
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('onclick').includes(type));
-    });
-    
-    // Filtro de Movimentações
-    const filterDiv = document.getElementById('movements-filter');
-    if (filterDiv) {
-        if (type === 'movimentacoes') filterDiv.classList.remove('hidden');
-        else filterDiv.classList.add('hidden');
-    }
-    
-    renderListingTable();
-}
-
-function renderListingTable() {
-    const tbody = document.getElementById('listing-tbody');
-    const thead = document.getElementById('listing-thead');
-    if (!tbody || !thead) return;
-    
-    tbody.innerHTML = '';
-    thead.innerHTML = '';
-    
-    const data = getUserData();
-    let rows = [];
-    
-    if (currentListingType === 'clients') {
-        thead.innerHTML = '<tr><th>Nome</th><th>Telefone</th><th>Email</th><th>Endereço</th></tr>';
-        rows = data.clients || [];
-        rows.forEach(r => tbody.innerHTML += `<tr><td>${r.name}</td><td>${r.phone||'-'}</td><td>${r.email||'-'}</td><td>${r.address||'-'}</td></tr>`);
-    } else if (currentListingType === 'suppliers') {
-        thead.innerHTML = '<tr><th>Nome</th><th>Contato</th><th>Telefone</th><th>CNPJ</th></tr>';
-        rows = data.suppliers || [];
-        rows.forEach(r => tbody.innerHTML += `<tr><td>${r.name}</td><td>${r.contact_person||'-'}</td><td>${r.phone||'-'}</td><td>${r.cnpj_cpf||'-'}</td></tr>`);
-    } else if (currentListingType === 'products') {
-        thead.innerHTML = '<tr><th>Nome</th><th>Preço</th><th>Descrição</th></tr>';
-        rows = data.products || [];
-        rows.forEach(r => tbody.innerHTML += `<tr><td>${r.name}</td><td>R$ ${parseFloat(r.price).toFixed(2)}</td><td>${r.description||'-'}</td></tr>`);
-    } else if (currentListingType === 'services') {
-        thead.innerHTML = '<tr><th>Nome</th><th>Preço</th><th>Descrição</th></tr>';
-        rows = data.services || [];
-        rows.forEach(r => tbody.innerHTML += `<tr><td>${r.name}</td><td>R$ ${parseFloat(r.price).toFixed(2)}</td><td>${r.description||'-'}</td></tr>`);
-    } else if (currentListingType === 'movimentacoes') {
-        thead.innerHTML = '<tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Entidade</th><th>Valor</th></tr>';
-        rows = data.transactions || [];
-        
-        // Filter Month
-        const m = document.getElementById('listing-month-filter').value;
-        if (m) rows = rows.filter(r => r.date.startsWith(m));
-        
-        // Sort
-        rows.sort((a,b) => new Date(b.date) - new Date(a.date));
-        
-        rows.forEach(r => {
-            const color = r.type === 'receita' ? 'text-success' : 'text-danger';
-            const sign = r.type === 'receita' ? '+' : '-';
-            tbody.innerHTML += `<tr><td>${r.date.split('-').reverse().join('/')}</td><td style="text-transform:capitalize">${r.type}</td><td>${r.category}</td><td>${r.entity||'-'}</td><td class="${color}">${sign} R$ ${parseFloat(r.value).toFixed(2)}</td></tr>`;
-        });
-    }
-    
-    if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center p-4">Nenhum registro encontrado para este filtro.</td></tr>';
-    }
-}
-
-// --- FUNÇÕES FISCAL & IRRF (ADICIONADAS PARA TABELA) ---
-function renderIrrf() {
-    const tbody = document.getElementById('irrf-table-body');
-    tbody.innerHTML = '';
-    // Garante que usa os padrões 2025 se vazio
-    if(!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
-
-    appData.irrfTable.sort((a,b) => a.max - b.max).forEach(row => {
-        const maxDisplay = row.max > 900000 ? 'Acima' : `R$ ${row.max.toFixed(2)}`;
-        tbody.innerHTML += `
-            <tr>
-                <td>${maxDisplay}</td>
-                <td>${row.rate}%</td>
-                <td>R$ ${row.deduction.toFixed(2)}</td>
-                <td>
-                    <button class="action-btn btn-warning" onclick="openIrrfModal('${row.id}')">✏️</button>
-                    <button class="action-btn btn-danger" onclick="deleteIrrfRow('${row.id}')">🗑️</button>
-                </td>
-            </tr>
-        `;
-    });
-}
-
-function openIrrfModal(id=null) {
-    document.getElementById('form-irrf').reset();
-    if(id) {
-        const r = appData.irrfTable.find(x => x.id === id);
-        document.getElementById('irrf-id').value = r.id;
-        document.getElementById('irrf-max').value = r.max;
-        document.getElementById('irrf-rate').value = r.rate;
-        document.getElementById('irrf-deduction').value = r.deduction;
-    } else {
-        document.getElementById('irrf-id').value = '';
-    }
-    document.getElementById('modal-irrf').classList.remove('hidden');
-}
-
-function saveIrrfRow(e) {
-    e.preventDefault();
-    const id = document.getElementById('irrf-id').value;
-    const row = {
-        id: id || 'irrf_'+Date.now(),
-        max: parseFloat(document.getElementById('irrf-max').value),
-        rate: parseFloat(document.getElementById('irrf-rate').value),
-        deduction: parseFloat(document.getElementById('irrf-deduction').value)
-    };
-    const list = appData.irrfTable;
-    const idx = id ? list.findIndex(x => x.id === id) : -1;
-    if(idx !== -1) list[idx] = row; else list.push(row);
-    saveData();
-    closeModal('modal-irrf');
-    renderIrrf();
-}
-
-function deleteIrrfRow(id) {
-    if(confirm('Excluir?')) {
-        appData.irrfTable = appData.irrfTable.filter(x => x.id !== id);
-        saveData();
-        renderIrrf();
-    }
-}
-
-// --- MEI FISCAL CALCULATION (NOVA FUNÇÃO) ---
-function renderMeiFiscalCalculations() {
-    // Parâmetros 2025
-    const salaryBase = 1620.99;
-    const inssVal = salaryBase * 0.05; // 5%
-    const icmsVal = 1.00;
-    const issVal = 5.00;
-
-    // 1. Renderizar Tabela de Encargos (Cálculo)
-    const tbodyTax = document.getElementById('mei-tax-body');
-    if (tbodyTax) {
-        tbodyTax.innerHTML = '';
-        
-        const scenarios = [
-            { label: 'Comércio / Indústria', fixed: icmsVal, total: inssVal + icmsVal },
-            { label: 'Serviços', fixed: issVal, total: inssVal + issVal },
-            { label: 'Comércio + Serviços', fixed: icmsVal + issVal, total: inssVal + icmsVal + issVal }
-        ];
-
-        scenarios.forEach(sc => {
-            tbodyTax.innerHTML += `
-                <tr>
-                    <td>${sc.label}</td>
-                    <td>R$ ${inssVal.toFixed(2)}</td>
-                    <td>R$ ${sc.fixed.toFixed(2)}</td>
-                    <td class="font-bold text-primary">R$ ${sc.total.toFixed(2)}</td>
-                </tr>
-            `;
-        });
-    }
-
-    // 2. Renderizar Tabela de Percentual Efetivo
-    // Usaremos o valor Comércio + Serviços como referência de segurança para o cálculo do %
-    const dasRef = inssVal + icmsVal + issVal; 
-    
-    const tbodyEff = document.getElementById('mei-effective-body');
-    if (tbodyEff) {
-        tbodyEff.innerHTML = '';
-        
-        const revenues = [1000, 3000, 6000];
-        
-        revenues.forEach(rev => {
-            const effectiveRate = (dasRef / rev) * 100;
-            tbodyEff.innerHTML += `
-                <tr>
-                    <td>R$ ${rev.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
-                    <td>R$ ${dasRef.toFixed(2)}</td>
-                    <td><strong>${effectiveRate.toFixed(2)}%</strong></td>
-                </tr>
-            `;
-        });
-    }
-}
-
-function getUserData() { return appData.records[appData.currentUser.id]; }
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
-function checkLicense() { const d = Math.ceil((appData.currentUser.licenseExpire - Date.now())/86400000); document.getElementById('license-days-display').innerText = d>0?d+' dias':'Expirado'; document.getElementById('license-warning').classList.toggle('hidden', d>0); }
-function generateLicenseCode() { document.getElementById('license-random-code').value = Math.floor(Math.random()*900)+100; }
 
 // --- FUNÇÕES FALTANTES (CORREÇÃO DE REFERENCE ERROR) ---
 function sendWhatsApp() {
