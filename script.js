@@ -144,9 +144,10 @@ if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
     } catch(e) { console.error("Firebase Init Error", e); }
 }
 
-// --- SERVIÇO DE E-MAIL ---
+// --- SERVIÇO DE E-MAIL (CORRIGIDO E OTIMIZADO) ---
 /**
  * Envia e-mails utilizando a Extensão "Trigger Email" do Firebase.
+ * OTIMIZAÇÃO: Força o destinatário como Array para garantir compatibilidade com a extensão.
  */
 async function sendAutomatedEmail(to, subject, htmlContent, context = 'system') {
     if (typeof firebase === 'undefined' || !firebase.apps.length) {
@@ -154,20 +155,27 @@ async function sendAutomatedEmail(to, subject, htmlContent, context = 'system') 
         return;
     }
 
-    // CORREÇÃO: Verifica se há usuário autenticado antes de escrever na coleção 'mail'
     const user = firebase.auth().currentUser;
     if (!user) {
         console.warn("Usuário não autenticado no Firebase. E-mail não pode ser enviado devido a regras de segurança.");
         return;
     }
 
+    // CORREÇÃO: Garante que 'to' seja sempre um array, mesmo que venha como string
+    // Isso evita falhas silenciosas na extensão do Firebase Trigger Email
+    const recipients = Array.isArray(to) ? to : [to];
+
     try {
         const db = firebase.firestore();
         await db.collection('mail').add({
-            to: to,
+            to: recipients,
             message: {
-                subject: subject,
-                html: htmlContent
+                subject: subject || "Sem Assunto",
+                html: htmlContent || "<p>Sem conteúdo.</p>"
+            },
+            delivery: {
+                attempts: 0,
+                state: 'PENDING'
             },
             metadata: {
                 timestamp: firebase.firestore.FieldValue.serverTimestamp(),
@@ -175,9 +183,9 @@ async function sendAutomatedEmail(to, subject, htmlContent, context = 'system') 
                 userId: user.uid
             }
         });
-        console.log(`Solicitação de e-mail (${subject}) enfileirada para: ${to}`);
+        console.log(`Solicitação de e-mail (${subject}) processada para: ${recipients.join(', ')}`);
     } catch (e) {
-        console.error("Erro ao solicitar envio de e-mail:", e.message);
+        console.error("Erro crítico ao solicitar envio de e-mail:", e.message);
     }
 }
 
