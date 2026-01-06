@@ -568,8 +568,8 @@ function loadSettings() {
     // Carregar Opções MEI
     renderMeiOptions();
 
-    // Lógica Admin para jcnvap@gmail.com
-    if(appData.currentUser.email === 'jcnvap@gmail.com') {
+    // Lógica Admin para jcnvap@gmail.com (Corrigido para case-insensitive)
+    if(appData.currentUser.email && appData.currentUser.email.toLowerCase() === 'jcnvap@gmail.com') {
         document.getElementById('admin-panel').classList.remove('hidden');
     } else {
         document.getElementById('admin-panel').classList.add('hidden');
@@ -836,6 +836,50 @@ function runQualityCheck() {
     d.transactions.forEach(t => { if(ids.has(t.id)) log.push(`ERRO: ID Duplicado ${t.id}`); ids.add(t.id); if(isNaN(t.value)) log.push(`ERRO: Valor inválido ${t.id}`); });
     d.appointments.forEach(a => { if(!a.title) log.push(`AVISO: Agenda sem título ${a.id}`); });
     alert(log.length === 0 ? "✅ Nenhuma inconsistência encontrada." : "⚠️ Relatório:\n\n" + log.join("\n"));
+}
+
+// --- FUNÇÃO DE TESTE DE E-MAIL (ADMIN) - NOVA ADIÇÃO ---
+async function sendTestEmail() {
+    // Verificação de segurança (case insensitive)
+    if (!appData.currentUser || !appData.currentUser.email || appData.currentUser.email.toLowerCase() !== 'jcnvap@gmail.com') {
+        alert("Acesso negado: Apenas o administrador pode executar este teste.");
+        return;
+    }
+
+    const btn = document.activeElement; 
+    const originalText = btn.innerText;
+    
+    try {
+        btn.innerText = "Enviando...";
+        btn.disabled = true;
+
+        await sendAutomatedEmail(
+            appData.currentUser.email,
+            "Teste de Sistema - Gestor MEI",
+            `
+            <div style="font-family: Arial, sans-serif; color: #333;">
+                <h3>Teste de Conectividade de E-mail</h3>
+                <p>Olá, Administrador.</p>
+                <p>Se você recebeu este e-mail, a integração entre o <strong>Gestor MEI</strong>, o <strong>Firebase Firestore</strong> e a extensão <strong>Trigger Email</strong> está funcionando corretamente.</p>
+                <p><strong>Timestamp:</strong> ${new Date().toLocaleString('pt-BR')}</p>
+                <hr>
+                <p style="font-size: 12px; color: #666;">Enviado pelo Painel de Configurações.</p>
+            </div>
+            `,
+            "admin_test_button"
+        );
+
+        alert("Solicitação enviada para a fila do Firebase!\n\nVerifique sua caixa de entrada em instantes (se estiver online) ou assim que a conexão retornar.");
+
+    } catch (e) {
+        console.error("Erro no teste de e-mail:", e);
+        alert("Erro ao tentar enviar: " + e.message);
+    } finally {
+        if(btn) {
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
+    }
 }
 
 // --- FINANCEIRO (Correção Novo Lançamento) ---
@@ -1619,48 +1663,6 @@ function validateLicense() {
         alert("Digite um código de validação.");
     }
 }
-      
-// --- FUNÇÃO DE TESTE DE E-MAIL (ADMIN) ---
-async function sendTestEmail() {
-    // Dupla verificação de segurança
-    if (!appData.currentUser || appData.currentUser.email !== 'jcnvap@gmail.com') {
-        alert("Acesso negado: Apenas o administrador pode executar este teste.");
-        return;
-    }
-
-    const btn = document.activeElement; // Captura o botão clicado
-    const originalText = btn.innerText;
-    
-    try {
-        btn.innerText = "Enviando...";
-        btn.disabled = true;
-
-        // Utiliza a função de e-mail já consolidada no sistema
-        await sendAutomatedEmail(
-            appData.currentUser.email, // Envia para o próprio admin
-            "Teste de Sistema - Gestor MEI",
-            `
-            <div style="font-family: Arial, sans-serif; color: #333;">
-                <h3>Teste de Conectividade de E-mail</h3>
-                <p>Olá, Administrador.</p>
-                <p>Se você recebeu este e-mail, a integração entre o <strong>Gestor MEI</strong>, o <strong>Firebase Firestore</strong> e a extensão <strong>Trigger Email</strong> está funcionando corretamente.</p>
-                <p><strong>Timestamp:</strong> ${new Date().toLocaleString('pt-BR')}</p>
-                <hr>
-                <p style="font-size: 12px; color: #666;">Enviado pelo Painel de Configurações.</p>
-            </div>
-            `,
-            "admin_test_button"
-        );
-
-        alert("Solicitação enviada para a fila do Firebase!\n\nVerifique sua caixa de entrada em instantes (se estiver online) ou assim que a conexão retornar.");
-
-    } catch (e) {
-        console.error("Erro no teste de e-mail:", e);
-        alert("Erro ao tentar enviar: " + e.message);
-    } finally {
-        btn.innerText = originalText;
-        btn.disabled = false;
-    }
-}	  
+        
 // Inicializa a aplicação
 init();
