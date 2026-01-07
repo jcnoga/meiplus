@@ -1,17 +1,10 @@
-// --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
+AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo  // --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
 const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional";
 const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
 const DB_KEY = 'MEI_SYSTEM_V11';
 
-// CONFIGURAÇÃO DE ENVIO DE E-MAIL (DIRECT SMTP)
-// Nota: Utiliza credenciais fornecidas para automação direta via SMTP.js
-// As credenciais abaixo foram extraídas do contexto fornecido para manter a funcionalidade solicitada.
-const MAIL_CONFIG = {
-    host: "smtp.gmail.com",
-    username: "jcnvap@gmail.com",
-    password: "weutorgpsdejpusl", // Senha de App (Espaços removidos para compatibilidade SMTP)
-    from: "jcnvap@gmail.com"
-};
+// Senha de app Firebase:  weut orgp sdej pusl
+
 
 // Constantes da Licença
 const LIC_PAD_VAL = 13;
@@ -28,7 +21,6 @@ const firebaseConfig = {
   appId: "1:327978602244:web:267232dbfb224d3deb4a51",
   measurementId: "G-2VMK9V9GHJ"
 };
-
 // --- GESTOR DE DADOS HÍBRIDO (IndexedDB + Firebase + LocalStorage) ---
 const DataManager = {
     dbName: 'MEI_DB_HYBRID',
@@ -151,64 +143,48 @@ if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
     } catch(e) { console.error("Firebase Init Error", e); }
 }
 
-// --- SERVIÇO DE E-MAIL (DIRECT SMTP / NO EXTENSIONS) ---
+// --- SERVIÇO DE E-MAIL (CORRIGIDO E OTIMIZADO) ---
 /**
- * Envia e-mails utilizando SMTP.js diretamente do navegador.
- * A responsabilidade do envio agora é da aplicação (Client-Side),
- * sem depender de gatilhos externos ou extensões do Firebase.
+ * Envia e-mails utilizando a Extensão "Trigger Email" do Firebase.
+ * OTIMIZAÇÃO: Força o destinatário como Array para garantir compatibilidade com a extensão.
  */
 async function sendAutomatedEmail(to, subject, htmlContent, context = 'system') {
-    // 1. Log de Auditoria no Firestore (Preserva histórico, mas não gatilha envio)
-    if (typeof firebase !== 'undefined' && firebase.apps.length) {
-        const user = firebase.auth().currentUser;
-        if (user) {
-            try {
-                const db = firebase.firestore();
-                // Mudança: Salvando em 'mail_log' para diferenciar do antigo 'mail' trigger
-                // ou mantendo 'mail' mas sabendo que a extensão foi desligada.
-                await db.collection('mail_audit_log').add({
-                    to: Array.isArray(to) ? to : [to],
-                    subject: subject,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                    status: 'DIRECT_ATTEMPT',
-                    context: context
-                });
-            } catch (e) {
-                console.warn("Log de e-mail falhou (apenas histórico):", e.message);
-            }
-        }
+    if (typeof firebase === 'undefined' || !firebase.apps.length) {
+        console.warn("Firebase não inicializado. E-mail não enviado:", subject);
+        return;
     }
 
-    // 2. Envio Direto via SMTP.js
-    const recipient = Array.isArray(to) ? to.join(',') : to;
-    
-    console.log(`Iniciando envio direto de e-mail para: ${recipient}`);
+    const user = firebase.auth().currentUser;
+    if (!user) {
+        console.warn("Usuário não autenticado no Firebase. E-mail não pode ser enviado devido a regras de segurança.");
+        return;
+    }
 
-    if (typeof Email !== 'undefined') {
-        try {
-            await Email.send({
-                Host: MAIL_CONFIG.host,
-                Username: MAIL_CONFIG.username,
-                Password: MAIL_CONFIG.password,
-                To: recipient,
-                From: MAIL_CONFIG.from,
-                Subject: subject,
-                Body: htmlContent
-            }).then(
-                message => {
-                    if (message === "OK") {
-                        console.log("E-mail enviado com sucesso (Direto)!");
-                    } else {
-                        console.warn("Retorno do servidor SMTP:", message);
-                    }
-                }
-            );
-        } catch (error) {
-            console.error("Falha crítica no envio direto de e-mail:", error);
-            // Fallback ou alerta silencioso pode ser implementado aqui
-        }
-    } else {
-        console.error("Biblioteca SMTP.js não carregada. O envio falhou.");
+    // CORREÇÃO: Garante que 'to' seja sempre um array, mesmo que venha como string
+    // Isso evita falhas silenciosas na extensão do Firebase Trigger Email
+    const recipients = Array.isArray(to) ? to : [to];
+
+    try {
+        const db = firebase.firestore();
+        await db.collection('mail').add({
+            to: recipients,
+            message: {
+                subject: subject || "Sem Assunto",
+                html: htmlContent || "<p>Sem conteúdo.</p>"
+            },
+            delivery: {
+                attempts: 0,
+                state: 'PENDING'
+            },
+            metadata: {
+                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                context: context,
+                userId: user.uid
+            }
+        });
+        console.log(`Solicitação de e-mail (${subject}) processada para: ${recipients.join(', ')}`);
+    } catch (e) {
+        console.error("Erro crítico ao solicitar envio de e-mail:", e.message);
     }
 }
 
@@ -405,8 +381,8 @@ async function handleGoogleLogin() {
             appData.currentUser = appUser;
             await DataManager.save(appData);
             
-            // ENVIO AUTOMÁTICO DE E-MAIL (DIRECT)
-            // (Agora funciona pois o usuário está autenticado pelo Google e a função usa SMTP direto)
+            // ENVIO AUTOMÁTICO DE E-MAIL
+            // (Agora funciona pois o usuário está autenticado pelo Google)
             sendAutomatedEmail(
                 appUser.email,
                 "Bem-vindo ao Gestor MEI",
@@ -483,7 +459,7 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
 
     await saveData(); 
     
-    // ENVIO AUTOMÁTICO DE E-MAIL (DIRECT)
+    // ENVIO AUTOMÁTICO DE E-MAIL (Só funciona se authSuccess for true)
     if (authSuccess) {
         sendAutomatedEmail(
             email,
@@ -543,14 +519,8 @@ document.querySelector('#login-form a').onclick = function(e) {
                 .then(() => alert('Link de recuperação enviado pelo Firebase para seu e-mail.'))
                 .catch((e) => alert('Erro: ' + e.message));
         } else {
-             // Fallback para o sistema de email direto (caso o firebase reset não esteja configurado)
-             sendAutomatedEmail(
-                emailInput,
-                "Recuperação de Senha",
-                "<p>Solicitação de recuperação de senha recebida.</p>",
-                "password_reset"
-             );
-            alert('Solicitação enviada. Verifique seu e-mail.');
+             // Fallback para o sistema de email trigger (se já logado, o que é raro aqui)
+            alert('Configuração de e-mail pendente. Entre em contato com o suporte.');
         }
     } else {
         alert('Por favor, preencha o campo de e-mail antes de clicar em "Esqueci minha senha".');
@@ -885,7 +855,7 @@ function runQualityCheck() {
     alert(log.length === 0 ? "✅ Nenhuma inconsistência encontrada." : "⚠️ Relatório:\n\n" + log.join("\n"));
 }
 
-// --- FUNÇÃO DE TESTE DE E-MAIL (ADMIN) - DIRECT SMTP ---
+// --- FUNÇÃO DE TESTE DE E-MAIL (ADMIN) - ROBUSTA ---
 async function sendTestEmail() {
     // Verificação de segurança robusta (case insensitive e trim)
     const userEmail = appData.currentUser && appData.currentUser.email ? appData.currentUser.email.toLowerCase().trim() : '';
@@ -896,7 +866,7 @@ async function sendTestEmail() {
     }
 
     const btn = document.activeElement; 
-    let originalText = "Enviar E-mail de Teste (Direto)";
+    let originalText = "Enviar E-mail de Teste";
     if(btn) originalText = btn.innerText;
     
     try {
@@ -910,9 +880,9 @@ async function sendTestEmail() {
             "Teste de Sistema - Gestor MEI",
             `
             <div style="font-family: Arial, sans-serif; color: #333;">
-                <h3>Teste de Envio Direto (SMTP)</h3>
+                <h3>Teste de Conectividade de E-mail</h3>
                 <p>Olá, Administrador.</p>
-                <p>Se você recebeu este e-mail, a integração direta via <strong>SMTP.js</strong> está funcionando corretamente.</p>
+                <p>Se você recebeu este e-mail, a integração entre o <strong>Gestor MEI</strong>, o <strong>Firebase Firestore</strong> e a extensão <strong>Trigger Email</strong> está funcionando corretamente.</p>
                 <p><strong>Timestamp:</strong> ${new Date().toLocaleString('pt-BR')}</p>
                 <hr>
                 <p style="font-size: 12px; color: #666;">Enviado pelo Painel de Configurações.</p>
@@ -921,7 +891,7 @@ async function sendTestEmail() {
             "admin_test_button"
         );
 
-        alert("Solicitação de envio processada via SMTP!\n\nVerifique sua caixa de entrada.");
+        alert("Solicitação enviada para a fila do Firebase!\n\nVerifique sua caixa de entrada em instantes (se estiver online) ou assim que a conexão retornar.");
 
     } catch (e) {
         console.error("Erro no teste de e-mail:", e);
@@ -1228,7 +1198,7 @@ function saveAppointment(e) {
 
     saveData(); 
     
-    // ENVIO AUTOMÁTICO DE E-MAIL (DIRECT)
+    // ENVIO AUTOMÁTICO DE E-MAIL
     const clientEmail = getUserData().clients.find(c => c.name === d.client_name)?.email;
     if (clientEmail) {
         sendAutomatedEmail(
