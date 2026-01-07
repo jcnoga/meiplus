@@ -1,10 +1,11 @@
-// -- AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo 
- // --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
+// --- PROTEÇÃO CONTRA DUPLA EXECUÇÃO E CORREÇÃO DE SINTAXE ---
+if (window.MEI_SCRIPT_LOADED) throw new Error("Script já carregado!");
+window.MEI_SCRIPT_LOADED = true;
+
+// --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
 const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional";
 const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
 const DB_KEY = 'MEI_SYSTEM_V11';
-
-// Senha de app Firebase:  weut orgp sdej pusl
 
 // CONFIGURAÇÃO EMAILJS (Envio Direto)
 // Preencha com suas chaves do Painel EmailJS (https://dashboard.emailjs.com/)
@@ -124,23 +125,25 @@ const DataManager = {
 // --- INICIALIZAÇÃO FIREBASE (COM PERSISTÊNCIA OFFLINE) E EMAILJS ---
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
     try {
-        firebase.initializeApp(firebaseConfig);
+        // CORREÇÃO: Verifica se já foi inicializado para evitar aviso no console
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+            // Habilitar persistência offline do Firestore
+            firebase.firestore().enablePersistence()
+                .catch((err) => {
+                    if (err.code == 'failed-precondition') {
+                        console.warn('Persistência falhou: Múltiplas abas abertas.');
+                    } else if (err.code == 'unimplemented') {
+                        console.warn('Navegador não suporta persistência offline.');
+                    }
+                });
+        }
         
         // Inicialização do EmailJS
         if (typeof emailjs !== 'undefined') {
             emailjs.init(EMAILJS_PUBLIC_KEY);
             console.log("EmailJS Initialized (Direct Send)");
         }
-
-        // Habilitar persistência offline do Firestore
-        firebase.firestore().enablePersistence()
-            .catch((err) => {
-                if (err.code == 'failed-precondition') {
-                    console.warn('Persistência falhou: Múltiplas abas abertas.');
-                } else if (err.code == 'unimplemented') {
-                    console.warn('Navegador não suporta persistência offline.');
-                }
-            });
 
         console.log("Firebase Initialized with Offline Support");
         
@@ -160,13 +163,13 @@ if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
  * Substitui o método anterior de Trigger Email do Firebase.
  */
 async function sendAutomatedEmail(to, subject, htmlContent, context = 'system') {
-    // Verificação de segurança: Apenas usuários autenticados ou sistema inicializado podem enviar
-    if (typeof firebase !== 'undefined' && firebase.apps.length) {
-        const user = firebase.auth().currentUser;
-        if (!user && context !== 'registration_manual' && context !== 'registration_google') {
-            console.warn("Usuário não autenticado. Envio de e-mail restrito por segurança.");
-            return;
-        }
+    // CORREÇÃO: Verifica autenticação Local (appData) OU Firebase
+    const localUser = appData && appData.currentUser;
+    const firebaseUser = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+
+    if (!localUser && !firebaseUser && context !== 'registration_manual' && context !== 'registration_google') {
+         console.warn("Bloqueio de Segurança: Nenhum usuário autenticado (Local ou Nuvem).");
+         return;
     }
 
     if (typeof emailjs === 'undefined') {
