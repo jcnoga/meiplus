@@ -1,19 +1,14 @@
 {
-  "name": "Gestor MEI Pro",
-  "short_name": "Gestor MEI",
-  "start_url": "./index.html",
+  "name": "Gestor MEI",
+  "short_name": "MEI",
+  "start_url": "./index.html",  <-- Importante: ./
   "display": "standalone",
-  "background_color": "#f3f4f6",
+  "background_color": "#ffffff",
   "theme_color": "#2563eb",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/732/732200.png",
+      "src": "./icon-192.png", <-- Importante: ./ (se tiver ícones)
       "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "https://cdn-icons-png.flaticon.com/512/732/732200.png",
-      "sizes": "512x512",
       "type": "image/png"
     }
   ]
