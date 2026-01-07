@@ -1,4 +1,4 @@
-AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo  // --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
+ // --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
 const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional";
 const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
 const DB_KEY = 'MEI_SYSTEM_V11';
