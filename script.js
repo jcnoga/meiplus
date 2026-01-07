@@ -1,3 +1,4 @@
+// -- AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo 
  // --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
 const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional";
 const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
@@ -217,6 +218,20 @@ let currentListingType = 'clients';
 let currentFinanceFilter = 'all';
 let financeDateFilterActive = false;
 
+// --- FUNÇÃO AUXILIAR CRUCIAL (RECUPERADA) ---
+function getUserData() {
+    if(appData.currentUser && appData.records[appData.currentUser.id]) {
+        return appData.records[appData.currentUser.id];
+    }
+    // Retorna estrutura vazia para evitar crash se usuário não estiver logado corretamente
+    return { transactions: [], appointments: [], products: [], services: [], clients: [], suppliers: [], rpas: [] };
+}
+
+function closeModal(modalId) {
+    const el = document.getElementById(modalId);
+    if(el) el.classList.add('hidden');
+}
+
 // --- INICIALIZAÇÃO E AUTH ---
 async function init() {
     const loadedData = await DataManager.load();
@@ -280,7 +295,6 @@ function forceCloudSync() {
     });
 }
 
-// CORREÇÃO 1: Implementação da função loadFiscalReminders que faltava
 function loadFiscalReminders() {
     const list = document.getElementById('fiscal-reminders');
     if (!list) return;
@@ -305,6 +319,32 @@ function loadFiscalReminders() {
             <strong class="text-warning">DASN-SIMEI:</strong> Prazo anual 31/05
         </li>
     `;
+}
+
+// --- FUNÇÃO AUXILIAR DE LICENÇA (RECUPERADA) ---
+function checkLicense() {
+    if (!appData.currentUser) return;
+    const now = Date.now();
+    const expire = appData.currentUser.licenseExpire || 0;
+    const daysLeft = Math.ceil((expire - now) / (1000 * 60 * 60 * 24));
+    
+    const display = document.getElementById('license-days-display');
+    const warning = document.getElementById('license-warning');
+    
+    if (display) {
+        if (daysLeft > 0) {
+            display.innerText = `${daysLeft} dias restantes`;
+            display.className = daysLeft < 15 ? 'text-warning text-sm mt-2' : 'text-success text-sm mt-2';
+        } else {
+            display.innerText = "Licença Expirada";
+            display.className = "text-danger text-sm mt-2";
+        }
+    }
+
+    if (warning) {
+        if (daysLeft <= 0) warning.classList.remove('hidden');
+        else warning.classList.add('hidden');
+    }
 }
 
 function loginUser(user) {
@@ -571,6 +611,70 @@ function navTo(viewId) {
     if(viewId === 'rpa') loadRPAOptions();
 }
 
+// --- FUNÇÕES DE LISTAGEM (RECUPERADAS) ---
+function switchListing(type) {
+    currentListingType = type;
+    document.querySelectorAll('#view-listagens .tab-btn').forEach(b => {
+        if(b.innerText.toLowerCase().includes(type.substring(0,4))) b.classList.add('active');
+        else b.classList.remove('active');
+    });
+
+    // Toggle Month Filter visibility
+    const filterDiv = document.getElementById('movements-filter');
+    if (type === 'movimentacoes') {
+        filterDiv.classList.remove('hidden');
+        if (!document.getElementById('listing-month-filter').value) {
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            document.getElementById('listing-month-filter').value = `${yyyy}-${mm}`;
+        }
+    } else {
+        filterDiv.classList.add('hidden');
+    }
+
+    renderListingTable();
+}
+
+function renderListingTable() {
+    const thead = document.getElementById('listing-thead');
+    const tbody = document.getElementById('listing-tbody');
+    tbody.innerHTML = '';
+    
+    const data = getUserData(); // Usa a função auxiliar restaurada
+
+    if (currentListingType === 'clients') {
+        thead.innerHTML = '<tr><th>Nome</th><th>Telefone</th><th>Email</th></tr>';
+        (data.clients || []).forEach(c => tbody.innerHTML += `<tr><td>${c.name}</td><td>${c.phone}</td><td>${c.email}</td></tr>`);
+    } else if (currentListingType === 'suppliers') {
+        thead.innerHTML = '<tr><th>Nome</th><th>Contato</th><th>Telefone</th></tr>';
+        (data.suppliers || []).forEach(s => tbody.innerHTML += `<tr><td>${s.name}</td><td>${s.contact_person}</td><td>${s.phone}</td></tr>`);
+    } else if (currentListingType === 'products') {
+        thead.innerHTML = '<tr><th>Produto</th><th>Preço</th><th>Descrição</th></tr>';
+        (data.products || []).forEach(p => tbody.innerHTML += `<tr><td>${p.name}</td><td>R$ ${parseFloat(p.price).toFixed(2)}</td><td>${p.description}</td></tr>`);
+    } else if (currentListingType === 'services') {
+        thead.innerHTML = '<tr><th>Serviço</th><th>Preço</th><th>Descrição</th></tr>';
+        (data.services || []).forEach(s => tbody.innerHTML += `<tr><td>${s.name}</td><td>R$ ${parseFloat(s.price).toFixed(2)}</td><td>${s.description}</td></tr>`);
+    } else if (currentListingType === 'movimentacoes') {
+        thead.innerHTML = '<tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Valor</th></tr>';
+        const filterVal = document.getElementById('listing-month-filter').value;
+        let list = data.transactions || [];
+        
+        if (filterVal) {
+            list = list.filter(t => t.date.startsWith(filterVal));
+        }
+        
+        // Sort Desc
+        list.sort((a,b) => new Date(b.date) - new Date(a.date));
+
+        list.forEach(t => {
+            const color = t.type === 'receita' ? 'green' : 'red';
+            tbody.innerHTML += `<tr><td>${t.date.split('-').reverse().join('/')}</td><td style="color:${color}">${t.type.toUpperCase()}</td><td>${t.category}</td><td>R$ ${parseFloat(t.value).toFixed(2)}</td></tr>`;
+        });
+    }
+}
+
+
 // --- CONFIGURAÇÕES & ADMIN ---
 function loadSettings() {
     const c = appData.currentUser.company || {};
@@ -716,6 +820,97 @@ function deleteMeiOption(id) {
         saveData();
         renderMeiOptions();
     }
+}
+
+// --- FUNÇÕES FISCAIS (RECUPERADAS) ---
+function renderIrrf() {
+    const tbody = document.getElementById('irrf-table-body');
+    tbody.innerHTML = '';
+    
+    // Sort by Max Base Ascending
+    appData.irrfTable.sort((a,b) => a.max - b.max);
+
+    appData.irrfTable.forEach(row => {
+        const displayMax = row.max > 999999 ? 'Acima' : `R$ ${row.max.toFixed(2)}`;
+        tbody.innerHTML += `
+            <tr>
+                <td>${displayMax}</td>
+                <td>${row.rate}%</td>
+                <td>R$ ${row.deduction.toFixed(2)}</td>
+                <td><button class="text-danger" onclick="deleteIrrfRow('${row.id}')">🗑️</button></td>
+            </tr>
+        `;
+    });
+}
+
+function openIrrfModal() {
+    document.getElementById('form-irrf').reset();
+    document.getElementById('irrf-id').value = '';
+    document.getElementById('modal-irrf').classList.remove('hidden');
+}
+
+function saveIrrfRow(e) {
+    e.preventDefault();
+    const row = {
+        id: 'irrf_' + Date.now(),
+        max: parseFloat(document.getElementById('irrf-max').value),
+        rate: parseFloat(document.getElementById('irrf-rate').value),
+        deduction: parseFloat(document.getElementById('irrf-deduction').value)
+    };
+    appData.irrfTable.push(row);
+    saveData();
+    closeModal('modal-irrf');
+    renderIrrf();
+}
+
+function deleteIrrfRow(id) {
+    if(confirm('Excluir faixa?')) {
+        appData.irrfTable = appData.irrfTable.filter(r => r.id !== id);
+        saveData();
+        renderIrrf();
+    }
+}
+
+function renderMeiFiscalCalculations() {
+    // 1. Get Active MEI Param (Highest Year <= Current Year, or just Highest)
+    const currentYear = new Date().getFullYear();
+    let param = appData.meiOptions.find(o => o.year === currentYear);
+    if (!param) param = appData.meiOptions[0]; // Fallback to first available
+
+    if (!param) {
+        document.getElementById('mei-tax-body').innerHTML = '<tr><td colspan="4">Configure os parâmetros em Configurações.</td></tr>';
+        return;
+    }
+
+    const inss = param.salary * (param.inssRate / 100);
+    const icms = param.icms;
+    const iss = param.iss;
+
+    const tbodyTax = document.getElementById('mei-tax-body');
+    tbodyTax.innerHTML = `
+        <tr><td>Comércio/Indústria</td><td>R$ ${inss.toFixed(2)}</td><td>R$ ${icms.toFixed(2)} (ICMS)</td><td><strong>R$ ${(inss + icms).toFixed(2)}</strong></td></tr>
+        <tr><td>Serviços</td><td>R$ ${inss.toFixed(2)}</td><td>R$ ${iss.toFixed(2)} (ISS)</td><td><strong>R$ ${(inss + iss).toFixed(2)}</strong></td></tr>
+        <tr><td>Comércio + Serviços</td><td>R$ ${inss.toFixed(2)}</td><td>R$ ${(icms+iss).toFixed(2)}</td><td><strong>R$ ${(inss + icms + iss).toFixed(2)}</strong></td></tr>
+    `;
+
+    // Effective Rate Simulation
+    const tbodyEff = document.getElementById('mei-effective-body');
+    tbodyEff.innerHTML = '';
+    const revenueSamples = [5000, 10000, 15000, 20000]; // Samples relative to limits
+    
+    // Fixed DAS Value Reference (Service + Commerce mixed worst case)
+    const fixedDas = inss + icms + iss;
+
+    revenueSamples.forEach(rev => {
+        const effRate = (fixedDas / rev) * 100;
+        tbodyEff.innerHTML += `
+            <tr>
+                <td>R$ ${rev.toFixed(2)}</td>
+                <td>R$ ${fixedDas.toFixed(2)}</td>
+                <td>${effRate.toFixed(2)}%</td>
+            </tr>
+        `;
+    });
 }
 
 // --- BACKUP & RESTORE FIX (Função Corrigida com Blob) ---
@@ -1493,6 +1688,15 @@ function sendWhatsApp() {
     const phone = appData.currentUser?.company?.phone || '';
     const text = "Olá, gostaria de renovar minha licença.";
     window.open(`https://wa.me/55${phone.replace(/\D/g,'')}?text=${encodeURIComponent(text)}`, '_blank');
+}
+
+function generateLicenseCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 8; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    document.getElementById('license-random-code').value = result;
 }
 
 function validateLicense() {
