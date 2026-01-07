@@ -1,10 +1,15 @@
-// --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
+AIzaSyAY06PHLqEUCBzg9SjnH4N6xe9ZzM8OLvo  // --- CONSTANTES DE SEGURANÇA E CONFIGURAÇÃO ---
 const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional";
 const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
 const DB_KEY = 'MEI_SYSTEM_V11';
 
 // Senha de app Firebase:  weut orgp sdej pusl
 
+// CONFIGURAÇÃO EMAILJS (Envio Direto)
+// Preencha com suas chaves do Painel EmailJS (https://dashboard.emailjs.com/)
+const EMAILJS_PUBLIC_KEY = "INSIRA_SUA_PUBLIC_KEY_AQUI"; 
+const EMAILJS_SERVICE_ID = "INSIRA_SEU_SERVICE_ID_AQUI"; 
+const EMAILJS_TEMPLATE_ID = "INSIRA_SEU_TEMPLATE_ID_AQUI";
 
 // Constantes da Licença
 const LIC_PAD_VAL = 13;
@@ -115,11 +120,17 @@ const DataManager = {
     }
 };
 
-// --- INICIALIZAÇÃO FIREBASE (COM PERSISTÊNCIA OFFLINE) ---
+// --- INICIALIZAÇÃO FIREBASE (COM PERSISTÊNCIA OFFLINE) E EMAILJS ---
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
     try {
         firebase.initializeApp(firebaseConfig);
         
+        // Inicialização do EmailJS
+        if (typeof emailjs !== 'undefined') {
+            emailjs.init(EMAILJS_PUBLIC_KEY);
+            console.log("EmailJS Initialized (Direct Send)");
+        }
+
         // Habilitar persistência offline do Firestore
         firebase.firestore().enablePersistence()
             .catch((err) => {
@@ -142,135 +153,55 @@ if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
     } catch(e) { console.error("Firebase Init Error", e); }
 }
 
-// --- SERVIÇO DE E-MAIL DIRETO (COM FILA LOCAL E WEBHOOK) ---
+// --- SERVIÇO DE E-MAIL (ALTERADO PARA ENVIO DIRETO - EMAILJS) ---
 /**
- * Gerencia o envio de e-mails diretamente via API configurada,
- * com suporte a fila offline e persistência local.
- * Substitui o uso da Extensão "Trigger Email" do Firebase.
- */
-const EmailService = {
-    async processQueue() {
-        if (!navigator.onLine) return; // Só processa se tiver internet
-        if (!appData.emailQueue || appData.emailQueue.length === 0) return;
-
-        const company = appData.currentUser.company || {};
-        const apiUrl = company.email_url;
-        const apiKey = company.email_key;
-
-        // Se não houver configuração, apenas loga e limpa a fila (Simulação)
-        if (!apiUrl) {
-            console.log("⚠️ Modo Simulação (E-mail): E-mails marcados como enviados (Configure a URL na API para envio real).");
-            console.log("E-mails processados e removidos da fila:", appData.emailQueue.length);
-            appData.emailQueue = []; // Limpa fila
-            saveData();
-            return;
-        }
-
-        console.log(`🔄 Processando fila de e-mails (${appData.emailQueue.length} pendentes)...`);
-
-        // Cria uma cópia para iterar
-        const queue = [...appData.emailQueue];
-        const remaining = [];
-        let modified = false;
-
-        for (const mail of queue) {
-            try {
-                // Tenta enviar via Fetch direto para a API do Usuário
-                const success = await this.sendViaApi(mail, apiUrl, apiKey);
-                if (success) {
-                    console.log(`✅ E-mail enviado com sucesso: ${mail.subject}`);
-                    modified = true;
-                } else {
-                    console.warn(`❌ Falha no envio: ${mail.subject}. Mantendo na fila.`);
-                    remaining.push(mail);
-                }
-            } catch (e) {
-                console.error("Erro crítico no processamento de e-mail:", e);
-                remaining.push(mail);
-            }
-        }
-
-        // Se houve alterações (envios bem sucedidos), atualiza a fila e salva
-        if (modified) {
-            appData.emailQueue = remaining;
-            saveData();
-        }
-    },
-
-    async sendViaApi(mailData, url, key) {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); // Timeout 15s
-
-            const headers = {
-                'Content-Type': 'application/json'
-            };
-            if (key) headers['Authorization'] = key.startsWith('Bearer') ? key : `Bearer ${key}`;
-
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify({
-                    to: mailData.to,
-                    subject: mailData.subject,
-                    html: mailData.html,
-                    text: mailData.text || '', // Fallback texto simples
-                    context: mailData.context,
-                    timestamp: mailData.timestamp
-                }),
-                signal: controller.signal
-            });
-
-            clearTimeout(timeoutId);
-
-            if (response.ok) return true;
-            
-            console.warn(`API E-mail retornou status: ${response.status} - ${response.statusText}`);
-            return false;
-        } catch (error) {
-            console.error("Erro de conexão API E-mail:", error.message);
-            return false;
-        }
-    }
-};
-
-/**
- * Enfileira e-mails para envio direto via EmailService.
- * Mantém a assinatura da função antiga para compatibilidade.
+ * Envia e-mails diretamente usando o SDK do EmailJS.
+ * Substitui o método anterior de Trigger Email do Firebase.
  */
 async function sendAutomatedEmail(to, subject, htmlContent, context = 'system') {
-    // 1. Prepara o objeto de e-mail
-    const recipients = Array.isArray(to) ? to : [to];
-    
-    // Normalização básica de HTML para Texto (opcional, para APIs que exigem ambos)
-    const textContent = htmlContent.replace(/<[^>]*>?/gm, '');
+    // Verificação de segurança: Apenas usuários autenticados ou sistema inicializado podem enviar
+    if (typeof firebase !== 'undefined' && firebase.apps.length) {
+        const user = firebase.auth().currentUser;
+        if (!user && context !== 'registration_manual' && context !== 'registration_google') {
+            console.warn("Usuário não autenticado. Envio de e-mail restrito por segurança.");
+            return;
+        }
+    }
 
-    const newEmail = {
-        id: `mail_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        to: recipients,
-        subject: subject,
-        html: htmlContent,
-        text: textContent,
+    if (typeof emailjs === 'undefined') {
+        console.warn("EmailJS SDK não carregado. E-mail não enviado.");
+        return;
+    }
+
+    // EmailJS geralmente aceita string única ou separada por vírgula para múltiplos destinatários
+    const recipients = Array.isArray(to) ? to.join(',') : to;
+
+    // Parâmetros do Template (Configure estas variáveis no seu Template do EmailJS)
+    const templateParams = {
+        to_email: recipients,
+        subject: subject || "Sem Assunto",
+        message_html: htmlContent || "<p>Sem conteúdo.</p>",
         context: context,
-        timestamp: new Date().toISOString(),
-        status: 'pending'
+        system_name: "Gestor MEI"
     };
 
-    // 2. Salva na fila LOCAL (appData)
-    if (!appData.emailQueue) appData.emailQueue = [];
-    appData.emailQueue.push(newEmail);
-    
-    console.log(`📩 E-mail enfileirado: ${subject}`);
-    
-    // 3. Salva dados para persistência (Importante para não perder se fechar o app)
-    await saveData();
-
-    // 4. Tenta processar a fila imediatamente (se online)
-    EmailService.processQueue();
+    try {
+        console.log(`Iniciando envio direto de e-mail (${subject}) para: ${recipients}...`);
+        
+        const response = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams);
+        
+        if (response.status === 200) {
+            console.log(`E-mail enviado com sucesso! Status: ${response.status}`);
+        } else {
+            console.warn("Envio de e-mail finalizado com status:", response);
+        }
+    } catch (e) {
+        console.error("Erro ao enviar e-mail via EmailJS:", e);
+    }
 }
 
 // --- VARIÁVEIS DE ESTADO ---
-let appData = { currentUser: null, users: [], records: {}, irrfTable: [], meiOptions: [], emailQueue: [] };
+let appData = { currentUser: null, users: [], records: {}, irrfTable: [], meiOptions: [] };
 
 // TABELA IRRF 2025 ATUALIZADA
 const DEFAULT_IRRF = [
@@ -291,11 +222,7 @@ async function init() {
     const loadedData = await DataManager.load();
     if (loadedData) appData = loadedData;
     
-    // Inicialização da Tabela IRRF se vazia
     if (!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
-    
-    // Inicialização da Fila de E-mail se inexistente
-    if (!appData.emailQueue) appData.emailQueue = [];
     
     // Inicialização Opções MEI 2025
     if (!appData.meiOptions || appData.meiOptions.length === 0) {
@@ -306,12 +233,9 @@ async function init() {
 
     // Monitor de Conectividade Global e Atualização de UI
     window.addEventListener('online', () => {
-        console.log("Conexão restaurada. Sincronizando e Processando Fila...");
+        console.log("Conexão restaurada. Sincronizando...");
         DataManager.updateSyncStatus(true);
-        if(appData.currentUser) DataManager.save(appData); // Dispara a fila do Firebase e IDB
-        
-        // Tenta processar e-mails pendentes ao reconectar
-        setTimeout(() => EmailService.processQueue(), 2000);
+        if(appData.currentUser) DataManager.save(appData); // Dispara a fila do Firebase
     });
 
     window.addEventListener('offline', () => {
@@ -321,11 +245,6 @@ async function init() {
 
     // Seta status inicial
     DataManager.updateSyncStatus(navigator.onLine);
-    
-    // Se estiver online na inicialização, tenta limpar a fila
-    if(navigator.onLine) {
-        setTimeout(() => EmailService.processQueue(), 3000);
-    }
 
     const sessionUser = sessionStorage.getItem('mei_user_id');
     if (sessionUser) {
@@ -347,16 +266,13 @@ function forceCloudSync() {
     btn.innerText = "Sincronizando...";
     btn.disabled = true;
     
-    // Força processamento de email também
-    EmailService.processQueue();
-    
     DataManager.save(appData).then(() => {
         setTimeout(() => {
             btn.innerText = originalText;
             btn.disabled = false;
             // Se estiver online, ok. Se offline, vai para fila.
             if(navigator.onLine) {
-                alert("Sincronização com a nuvem e processamento de fila de e-mails iniciados.");
+                alert("Sincronização com a nuvem processada.");
             } else {
                 alert("Sem internet. Dados salvos localmente e agendados para envio.");
             }
@@ -478,7 +394,7 @@ async function handleGoogleLogin() {
             await DataManager.save(appData);
             
             // ENVIO AUTOMÁTICO DE E-MAIL
-            // (Agora funciona pois o usuário está autenticado pelo Google e usamos a fila local)
+            // (Agora funciona pois o usuário está autenticado pelo Google)
             sendAutomatedEmail(
                 appUser.email,
                 "Bem-vindo ao Gestor MEI",
@@ -555,13 +471,15 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
 
     await saveData(); 
     
-    // ENVIO AUTOMÁTICO DE E-MAIL (Agora funciona com a fila local)
-    sendAutomatedEmail(
-        email,
-        "Bem-vindo ao Gestor MEI",
-        `<h3>Olá, ${name}!</h3><p>Obrigado por se cadastrar no Gestor MEI.</p><p>Aproveite seus 90 dias de acesso gratuito.</p>`,
-        "registration_manual"
-    );
+    // ENVIO AUTOMÁTICO DE E-MAIL (Só funciona se authSuccess for true)
+    if (authSuccess) {
+        sendAutomatedEmail(
+            email,
+            "Bem-vindo ao Gestor MEI",
+            `<h3>Olá, ${name}!</h3><p>Obrigado por se cadastrar no Gestor MEI.</p><p>Aproveite seus 90 dias de acesso gratuito.</p>`,
+            "registration_manual"
+        );
+    }
 
     loginUser(newUser);
 });
@@ -665,10 +583,6 @@ function loadSettings() {
     document.getElementById('conf-url-das').value = c.url_das || DEFAULT_URL_DAS;
     document.getElementById('conf-reserve-rate').value = c.reserve_rate || 10;
     document.getElementById('conf-prolabore-target').value = c.prolabore_target || 4000;
-    
-    // CARREGAMENTO NOVOS CAMPOS DE E-MAIL
-    document.getElementById('conf-email-url').value = c.email_url || '';
-    document.getElementById('conf-email-key').value = c.email_key || '';
 
     // Carregar Opções MEI
     renderMeiOptions();
@@ -703,10 +617,7 @@ function saveCompanyData(e) {
         url_fiscal: document.getElementById('conf-url-fiscal').value,
         url_das: document.getElementById('conf-url-das').value,
         reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
-        prolabore_target: parseFloat(document.getElementById('conf-prolabore-target').value),
-        // NOVOS CAMPOS DE E-MAIL
-        email_url: document.getElementById('conf-email-url').value,
-        email_key: document.getElementById('conf-email-key').value
+        prolabore_target: parseFloat(document.getElementById('conf-prolabore-target').value)
     };
 
     appData.currentUser.company = companyData;
@@ -730,9 +641,6 @@ function saveCompanyData(e) {
     if(supIndex >= 0) suppliersList[supIndex] = supplierData; else suppliersList.push(supplierData);
     
     saveData(); alert('Dados salvos e cadastro de fornecedor atualizado!');
-    
-    // Tenta processar fila se configurou agora
-    EmailService.processQueue();
 }
 
 // --- GESTÃO MEI (CRUD) ---
@@ -892,9 +800,7 @@ function adminPopulateData() {
         reserve_rate: 15,
         prolabore_target: 5000,
         url_fiscal: DEFAULT_URL_FISCAL,
-        url_das: DEFAULT_URL_DAS,
-        email_url: "", // Reset API Config
-        email_key: ""
+        url_das: DEFAULT_URL_DAS
     };
     // Atualizar no cadastro de fornecedores como "Minha Empresa"
     const supplierId = 'sup_own_' + appData.currentUser.id;
@@ -961,7 +867,7 @@ function runQualityCheck() {
     alert(log.length === 0 ? "✅ Nenhuma inconsistência encontrada." : "⚠️ Relatório:\n\n" + log.join("\n"));
 }
 
-// --- FUNÇÃO DE TESTE DE E-MAIL (ADMIN) - ROBUSTA COM FILA INTERNA ---
+// --- FUNÇÃO DE TESTE DE E-MAIL (ADMIN) - ROBUSTA COM EMAILJS ---
 async function sendTestEmail() {
     // Verificação de segurança robusta (case insensitive e trim)
     const userEmail = appData.currentUser && appData.currentUser.email ? appData.currentUser.email.toLowerCase().trim() : '';
@@ -972,36 +878,36 @@ async function sendTestEmail() {
     }
 
     const btn = document.activeElement; 
-    let originalText = "Enviar E-mail de Teste (Fila Interna)";
+    let originalText = "Enviar E-mail de Teste (EmailJS Direto)";
     if(btn) originalText = btn.innerText;
     
     try {
         if(btn) {
-            btn.innerText = "Enfileirando...";
+            btn.innerText = "Enviando...";
             btn.disabled = true;
         }
 
         await sendAutomatedEmail(
             appData.currentUser.email,
-            "Teste de Envio Direto - Gestor MEI",
+            "Teste de Sistema - Gestor MEI",
             `
             <div style="font-family: Arial, sans-serif; color: #333;">
-                <h3>Teste de Envio de E-mail (API Direta)</h3>
+                <h3>Teste de Conectividade de E-mail</h3>
                 <p>Olá, Administrador.</p>
-                <p>Se você recebeu este e-mail, a configuração da URL de API (Webhook) está correta e a fila de processamento interna funcionou.</p>
+                <p>Se você recebeu este e-mail, a integração entre o <strong>Gestor MEI</strong> e o <strong>EmailJS</strong> está funcionando corretamente.</p>
                 <p><strong>Timestamp:</strong> ${new Date().toLocaleString('pt-BR')}</p>
                 <hr>
-                <p style="font-size: 12px; color: #666;">Enviado pelo Painel de Configurações.</p>
+                <p style="font-size: 12px; color: #666;">Enviado diretamente pelo Painel de Configurações.</p>
             </div>
             `,
             "admin_test_button"
         );
 
-        alert("E-mail adicionado à fila local!\n\nO sistema tentará enviar imediatamente para a URL configurada nas Configurações. Verifique o Console (F12) para logs de sucesso ou erro.");
+        alert("Solicitação enviada via EmailJS!\n\nVerifique sua caixa de entrada em instantes.");
 
     } catch (e) {
         console.error("Erro no teste de e-mail:", e);
-        alert("Erro ao tentar enfileirar: " + e.message);
+        alert("Erro ao tentar enviar: " + e.message);
     } finally {
         if(btn) {
             btn.innerText = originalText;
@@ -1304,7 +1210,7 @@ function saveAppointment(e) {
 
     saveData(); 
     
-    // ENVIO AUTOMÁTICO DE E-MAIL (Agora funciona com a fila local)
+    // ENVIO AUTOMÁTICO DE E-MAIL
     const clientEmail = getUserData().clients.find(c => c.name === d.client_name)?.email;
     if (clientEmail) {
         sendAutomatedEmail(
@@ -1582,7 +1488,7 @@ function saveCrudItem(e) {
 }
 function deleteCrudItem(t,id){ if(confirm('Apagar?')){const l=getUserData()[t]; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderCrud(t);} }
 
-// --- FUNÇÕES FALTANTES ---
+// --- FUNÇÕES FALTANTES (CORREÇÃO DE REFERENCE ERROR) ---
 function sendWhatsApp() {
     const phone = appData.currentUser?.company?.phone || '';
     const text = "Olá, gostaria de renovar minha licença.";
