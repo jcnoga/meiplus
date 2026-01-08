@@ -17,7 +17,6 @@ const firebaseConfig = {
   measurementId: "G-2VMK9V9GHJ"
 };
 
-
 const DataManager = {
     dbName: 'MEI_DB_HYBRID',
     storeName: 'mei_data',
@@ -37,6 +36,7 @@ const DataManager = {
     },
 
     async save(data) {
+        // Persistência Local
         try { localStorage.setItem(DB_KEY, JSON.stringify(data)); } catch(e) { console.warn("LocalStorage full"); }
 
         try {
@@ -45,18 +45,42 @@ const DataManager = {
             tx.objectStore(this.storeName).put(data, 'main_data');
         } catch(e) { console.error("IDB Error", e); }
 
+        // Sincronização Cloud (GitHub Pages/Web)
         if (typeof firebase !== 'undefined' && firebase.apps.length && data.currentUser && firebaseConfig.apiKey !== "SUA_API_KEY_AQUI") {
             try {
-                const db = firebase.firestore();
-                await db.collection('users').doc(data.currentUser.id).set(JSON.parse(JSON.stringify(data)));
-                this.updateSyncStatus(true);
+                // Verifica se há conexão antes de tentar gravar
+                if (navigator.onLine) {
+                    const db = firebase.firestore();
+                    // Usamos JSON.parse/stringify para remover referências cíclicas e garantir objeto puro
+                    await db.collection('users').doc(data.currentUser.id).set(JSON.parse(JSON.stringify(data)));
+                    this.updateSyncStatus(true);
+                } else {
+                    this.updateSyncStatus(false);
+                }
             } catch(e) { 
-                console.error("Cloud Sync Error", e); 
+                console.error("Cloud Sync Error (Verifique Domínios Autorizados no Firebase):", e); 
                 this.updateSyncStatus(false);
             }
         } else {
             this.updateSyncStatus(false);
         }
+    },
+
+    // Novo método para baixar dados da nuvem ao logar (Crucial para Web/Github Pages)
+    async pullCloudData(userId) {
+        if (typeof firebase !== 'undefined' && firebase.apps.length && navigator.onLine) {
+            try {
+                const db = firebase.firestore();
+                const doc = await db.collection('users').doc(userId).get();
+                if (doc.exists) {
+                    console.log("Dados da nuvem recuperados com sucesso.");
+                    return doc.data();
+                }
+            } catch (e) {
+                console.error("Erro ao baixar dados da nuvem:", e);
+            }
+        }
+        return null;
     },
 
     async load() {
@@ -87,8 +111,22 @@ const DataManager = {
     }
 };
 
+// Inicialização Firebase (Robustez para GitHub Pages)
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey && firebaseConfig.apiKey !== "SUA_API_KEY_AQUI") {
-    try { firebase.initializeApp(firebaseConfig); console.log("Firebase Initialized"); } catch(e) { console.error("Firebase Init Error", e); }
+    try { 
+        firebase.initializeApp(firebaseConfig); 
+        console.log("Firebase Initialized - GitHub Pages Mode");
+        
+        // Listener para persistência de Auth em refresh de página
+        firebase.auth().onAuthStateChanged((user) => {
+            if (user) {
+                console.log("Sessão Firebase Ativa:", user.email);
+            } else {
+                console.log("Nenhuma sessão Firebase ativa.");
+            }
+        });
+
+    } catch(e) { console.error("Firebase Init Error", e); }
 }
 
 let appData = { currentUser: null, users: [], records: {}, irrfTable: [] };
@@ -108,13 +146,19 @@ let currentFinanceFilter = 'all';
 let currentView = 'dashboard';
 
 async function init() {
+    // Carrega dados locais primeiro para velocidade
     const loadedData = await DataManager.load();
     if (loadedData) appData = loadedData;
+    
     if (!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
+    
     const sessionUser = sessionStorage.getItem('mei_user_id');
     if (sessionUser) {
         const user = appData.users.find(u => u.id === sessionUser);
-        if (user) { loginUser(user); return; }
+        if (user) { 
+            loginUser(user); // Tenta logar e syncar
+            return; 
+        }
     }
     showAuth();
 }
@@ -122,22 +166,42 @@ async function init() {
 function showAuth() { document.getElementById('auth-screen').classList.remove('hidden'); document.getElementById('app-container').classList.add('hidden'); }
 async function saveData() { await DataManager.save(appData); }
 
-function loginUser(user) {
-    appData.currentUser = user; sessionStorage.setItem('mei_user_id', user.id);
+async function loginUser(user) {
+    // Tentativa de puxar dados mais recentes da nuvem (Feature Híbrida)
+    document.getElementById('sync-indicator').className = 'sync-status sync-offline'; // reset visual
+    
+    const cloudData = await DataManager.pullCloudData(user.id);
+    if (cloudData) {
+        // Se houver dados na nuvem, mescla com o appData local
+        // Prioridade para a nuvem para evitar overwrites de sessões antigas
+        appData = cloudData;
+        // Atualiza a referência do usuário logado com os dados da nuvem
+        const updatedUser = appData.users.find(u => u.id === user.id);
+        if (updatedUser) user = updatedUser;
+        DataManager.updateSyncStatus(true);
+    }
+
+    appData.currentUser = user; 
+    sessionStorage.setItem('mei_user_id', user.id);
+    
     document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('app-container').classList.remove('hidden');
     document.getElementById('user-name-display').innerText = user.name;
     
+    if(!appData.records[user.id]) appData.records[user.id] = createSeedData(); // Segurança extra
     if(!appData.records[user.id].appointments) appData.records[user.id].appointments = [];
     if(!appData.records[user.id].reminders) appData.records[user.id].reminders = []; 
     
-    checkLicense(); navTo('dashboard'); loadFiscalReminders();
+    checkLicense(); 
+    navTo('dashboard'); 
+    loadFiscalReminders();
     initReminderSystem(); 
     saveData(); 
 }
 
 function logout() { 
     if(checkInterval) clearInterval(checkInterval); 
+    if (typeof firebase !== 'undefined') firebase.auth().signOut();
     appData.currentUser = null; 
     sessionStorage.removeItem('mei_user_id'); 
     location.reload(); 
@@ -154,8 +218,15 @@ function handleGoogleLogin() {
         return;
     }
     const provider = new firebase.auth.GoogleAuthProvider();
-    firebase.auth().signInWithPopup(provider).then((result) => {
+    firebase.auth().signInWithPopup(provider).then(async (result) => {
         const user = result.user;
+        
+        // Tenta baixar dados existentes deste usuário Google antes de criar novo
+        const cloudData = await DataManager.pullCloudData('u_' + user.uid);
+        if (cloudData) {
+             appData = cloudData;
+        }
+
         let appUser = appData.users.find(u => u.email === user.email);
         if(!appUser) {
             appUser = {
@@ -171,7 +242,8 @@ function handleGoogleLogin() {
         }
         loginUser(appUser);
     }).catch((error) => {
-        alert("Erro no login Google: " + error.message);
+        console.error("Erro Auth Google:", error);
+        alert("Erro no login Google: " + error.message + "\nVerifique se o domínio (ex: github.io) está autorizado no Firebase Console.");
     });
 }
 
@@ -211,7 +283,7 @@ document.getElementById('register-form').addEventListener('submit', (e) => {
 document.getElementById('login-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const user = appData.users.find(u => u.email === document.getElementById('login-email').value && u.password === document.getElementById('login-password').value);
-    user ? loginUser(user) : alert('Erro no login');
+    user ? loginUser(user) : alert('Erro no login ou usuário não encontrado localmente.');
 });
 
 function navTo(viewId) {
