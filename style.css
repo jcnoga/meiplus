@@ -10,7 +10,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
 body { background-color: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
 
-.hidden { display: none !important; }
+/* FIX: Reforço para garantir que elementos ocultos não apareçam */
+.hidden { display: none !important; visibility: hidden !important; opacity: 0 !important; }
+
 .flex { display: flex; }
 .flex-col { flex-direction: column; }
 .items-center { align-items: center; }
@@ -59,18 +61,18 @@ button { padding: 0.75rem 1rem; border: none; border-radius: 0.375rem; cursor: p
 .google-btn { background-color: #db4437; color: white; }
 .action-btn { padding: 0.4rem 0.6rem; font-size: 0.85rem; margin-right: 0.25rem; margin-bottom: 0; }
 
-#auth-screen { flex: 1; display: flex; justify-content: center; align-items: center; background: linear-gradient(135deg, var(--primary), var(--secondary)); }
+#auth-screen { flex: 1; display: flex; justify-content: center; align-items: center; background: linear-gradient(135deg, var(--primary), var(--secondary)); width: 100%; height: 100vh; position: absolute; top:0; left:0; z-index: 50; }
 .auth-card { background: var(--card-bg); padding: 2rem; border-radius: 0.5rem; width: 100%; max-width: 400px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
 
-#app-container { display: flex; flex: 1; height: 100vh; overflow: hidden; }
+#app-container { display: flex; flex: 1; height: 100vh; overflow: hidden; width: 100%; }
 
-aside { width: 250px; background-color: #111827; color: white; display: flex; flex-direction: column; padding: 1rem; transition: transform 0.3s; z-index: 10; }
+aside { width: 250px; background-color: #111827; color: white; display: flex; flex-direction: column; padding: 1rem; transition: transform 0.3s; z-index: 10; flex-shrink: 0; }
 aside h2 { margin-bottom: 2rem; text-align: center; font-size: 1.5rem; }
 .nav-item { padding: 0.75rem; cursor: pointer; border-radius: 0.375rem; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.75rem; }
 .nav-item:hover, .nav-item.active { background-color: #374151; }
 .user-info { margin-top: auto; padding-top: 1rem; border-top: 1px solid #374151; font-size: 0.875rem; }
 
-main { flex: 1; overflow-y: auto; padding: 1.5rem; position: relative; }
+main { flex: 1; overflow-y: auto; padding: 1.5rem; position: relative; width: 100%; }
 .view-header { margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 
 .dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
@@ -100,6 +102,14 @@ tr:hover { background-color: #f9fafb; }
 .sync-status { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
 .sync-online { background-color: var(--success); box-shadow: 0 0 5px var(--success); }
 .sync-offline { background-color: var(--text-light); }
+
+#loading-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: var(--bg); z-index: 9999;
+    display: flex; justify-content: center; align-items: center; flex-direction: column;
+}
+.loader { border: 4px solid #f3f3f3; border-top: 4px solid var(--primary); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 1rem; }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
 @media (max-width: 768px) {
     #app-container { flex-direction: column; }

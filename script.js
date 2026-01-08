@@ -1,6 +1,6 @@
 const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional";
 const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
-const DB_KEY = 'MEI_SYSTEM_V11';
+const DB_KEY = 'MEI_SYSTEM_V12_6'; // Versão atualizada
 const ADMIN_EMAIL = 'jcnvap@gmail.com'; 
 
 const LIC_PAD_VAL = 13;
@@ -18,7 +18,7 @@ const firebaseConfig = {
 };
 
 const DataManager = {
-    dbName: 'MEI_DB_HYBRID',
+    dbName: 'MEI_DB_HYBRID_V2',
     storeName: 'mei_data',
     
     async initDB() {
@@ -36,7 +36,7 @@ const DataManager = {
     },
 
     async save(data) {
-        // Persistência Local
+        // Persistência Local (Sempre funciona)
         try { localStorage.setItem(DB_KEY, JSON.stringify(data)); } catch(e) { console.warn("LocalStorage full"); }
 
         try {
@@ -45,20 +45,19 @@ const DataManager = {
             tx.objectStore(this.storeName).put(data, 'main_data');
         } catch(e) { console.error("IDB Error", e); }
 
-        // Sincronização Cloud (GitHub Pages/Web)
-        if (typeof firebase !== 'undefined' && firebase.apps.length && data.currentUser && firebaseConfig.apiKey !== "SUA_API_KEY_AQUI") {
+        // Sincronização Cloud
+        if (typeof firebase !== 'undefined' && firebase.apps.length && data.currentUser) {
             try {
-                // Verifica se há conexão antes de tentar gravar
                 if (navigator.onLine) {
                     const db = firebase.firestore();
-                    // Usamos JSON.parse/stringify para remover referências cíclicas e garantir objeto puro
-                    await db.collection('users').doc(data.currentUser.id).set(JSON.parse(JSON.stringify(data)));
+                    const cleanData = JSON.parse(JSON.stringify(data));
+                    await db.collection('users').doc(data.currentUser.id).set(cleanData);
                     this.updateSyncStatus(true);
                 } else {
                     this.updateSyncStatus(false);
                 }
             } catch(e) { 
-                console.error("Cloud Sync Error (Verifique Domínios Autorizados no Firebase):", e); 
+                console.warn("Cloud Sync Indisponível:", e.message); 
                 this.updateSyncStatus(false);
             }
         } else {
@@ -66,18 +65,14 @@ const DataManager = {
         }
     },
 
-    // Novo método para baixar dados da nuvem ao logar (Crucial para Web/Github Pages)
     async pullCloudData(userId) {
         if (typeof firebase !== 'undefined' && firebase.apps.length && navigator.onLine) {
             try {
                 const db = firebase.firestore();
                 const doc = await db.collection('users').doc(userId).get();
-                if (doc.exists) {
-                    console.log("Dados da nuvem recuperados com sucesso.");
-                    return doc.data();
-                }
+                if (doc.exists) return doc.data();
             } catch (e) {
-                console.error("Erro ao baixar dados da nuvem:", e);
+                console.warn("Falha ao buscar dados Cloud:", e);
             }
         }
         return null;
@@ -111,21 +106,21 @@ const DataManager = {
     }
 };
 
-// Inicialização Firebase (Robustez para GitHub Pages)
+// --- FIX CRÍTICO: FUNÇÃO GLOBAL DE SALVAMENTO ---
+// Esta função estava faltando, causando o erro "saveData is not defined"
+async function saveData() {
+    await DataManager.save(appData);
+}
+// ------------------------------------------------
+
+// Inicialização Firebase
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey && firebaseConfig.apiKey !== "SUA_API_KEY_AQUI") {
     try { 
         firebase.initializeApp(firebaseConfig); 
-        console.log("Firebase Initialized - GitHub Pages Mode");
-        
-        // Listener para persistência de Auth em refresh de página
+        console.log("Firebase Init OK");
         firebase.auth().onAuthStateChanged((user) => {
-            if (user) {
-                console.log("Sessão Firebase Ativa:", user.email);
-            } else {
-                console.log("Nenhuma sessão Firebase ativa.");
-            }
+            if (user) console.log("Auth Firebase: Logado");
         });
-
     } catch(e) { console.error("Firebase Init Error", e); }
 }
 
@@ -146,49 +141,57 @@ let currentFinanceFilter = 'all';
 let currentView = 'dashboard';
 
 async function init() {
-    // Carrega dados locais primeiro para velocidade
     const loadedData = await DataManager.load();
     if (loadedData) appData = loadedData;
     
     if (!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
     
     const sessionUser = sessionStorage.getItem('mei_user_id');
-    if (sessionUser) {
-        const user = appData.users.find(u => u.id === sessionUser);
-        if (user) { 
-            loginUser(user); // Tenta logar e syncar
-            return; 
+    
+    setTimeout(() => {
+        if (sessionUser) {
+            const user = appData.users.find(u => u.id === sessionUser);
+            if (user) { 
+                loginUser(user); 
+            } else {
+                showAuth();
+            }
+        } else {
+            showAuth();
         }
-    }
-    showAuth();
+        const loader = document.getElementById('loading-overlay');
+        if(loader) loader.style.display = 'none';
+    }, 500);
 }
 
-function showAuth() { document.getElementById('auth-screen').classList.remove('hidden'); document.getElementById('app-container').classList.add('hidden'); }
-async function saveData() { await DataManager.save(appData); }
+function showAuth() { 
+    document.getElementById('auth-screen').classList.remove('hidden'); 
+    document.getElementById('app-container').classList.add('hidden'); 
+}
 
 async function loginUser(user) {
-    // Tentativa de puxar dados mais recentes da nuvem (Feature Híbrida)
-    document.getElementById('sync-indicator').className = 'sync-status sync-offline'; // reset visual
+    const authScreen = document.getElementById('auth-screen');
+    authScreen.classList.add('hidden');
+    authScreen.style.display = 'none'; 
+
+    document.getElementById('app-container').classList.remove('hidden');
     
-    const cloudData = await DataManager.pullCloudData(user.id);
-    if (cloudData) {
-        // Se houver dados na nuvem, mescla com o appData local
-        // Prioridade para a nuvem para evitar overwrites de sessões antigas
-        appData = cloudData;
-        // Atualiza a referência do usuário logado com os dados da nuvem
-        const updatedUser = appData.users.find(u => u.id === user.id);
-        if (updatedUser) user = updatedUser;
-        DataManager.updateSyncStatus(true);
-    }
+    try {
+        const cloudData = await DataManager.pullCloudData(user.id);
+        if (cloudData) {
+            appData = cloudData;
+            const updatedUser = appData.users.find(u => u.id === user.id);
+            if (updatedUser) user = updatedUser;
+            DataManager.updateSyncStatus(true);
+        }
+    } catch(e) { console.log("Ignorando erro de sync no login inicial"); }
 
     appData.currentUser = user; 
     sessionStorage.setItem('mei_user_id', user.id);
     
-    document.getElementById('auth-screen').classList.add('hidden');
-    document.getElementById('app-container').classList.remove('hidden');
     document.getElementById('user-name-display').innerText = user.name;
     
-    if(!appData.records[user.id]) appData.records[user.id] = createSeedData(); // Segurança extra
+    if(!appData.records[user.id]) appData.records[user.id] = createSeedData();
     if(!appData.records[user.id].appointments) appData.records[user.id].appointments = [];
     if(!appData.records[user.id].reminders) appData.records[user.id].reminders = []; 
     
@@ -213,19 +216,11 @@ function toggleAuth(screen) {
 }
 
 function handleGoogleLogin() {
-    if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "SUA_API_KEY_AQUI") {
-        alert('Configure as chaves do Firebase no código para usar o login com Google.');
-        return;
-    }
     const provider = new firebase.auth.GoogleAuthProvider();
     firebase.auth().signInWithPopup(provider).then(async (result) => {
         const user = result.user;
-        
-        // Tenta baixar dados existentes deste usuário Google antes de criar novo
         const cloudData = await DataManager.pullCloudData('u_' + user.uid);
-        if (cloudData) {
-             appData = cloudData;
-        }
+        if (cloudData) appData = cloudData;
 
         let appUser = appData.users.find(u => u.email === user.email);
         if(!appUser) {
@@ -242,8 +237,7 @@ function handleGoogleLogin() {
         }
         loginUser(appUser);
     }).catch((error) => {
-        console.error("Erro Auth Google:", error);
-        alert("Erro no login Google: " + error.message + "\nVerifique se o domínio (ex: github.io) está autorizado no Firebase Console.");
+        alert("Erro no login Google. Verifique se o domínio foi autorizado no Firebase.\n" + error.message);
     });
 }
 
@@ -277,22 +271,26 @@ document.getElementById('register-form').addEventListener('submit', (e) => {
     };
     appData.users.push(newUser); 
     appData.records[newUser.id] = createSeedData();
-    saveData(); loginUser(newUser);
+    saveData().then(() => loginUser(newUser));
 });
 
 document.getElementById('login-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const user = appData.users.find(u => u.email === document.getElementById('login-email').value && u.password === document.getElementById('login-password').value);
-    user ? loginUser(user) : alert('Erro no login ou usuário não encontrado localmente.');
+    user ? loginUser(user) : alert('Usuário não encontrado ou senha incorreta.');
 });
 
 function navTo(viewId) {
     currentView = viewId;
     document.querySelectorAll('main section').forEach(el => el.classList.add('hidden'));
-    document.getElementById('view-' + viewId).classList.remove('hidden');
+    const target = document.getElementById('view-' + viewId);
+    if(target) target.classList.remove('hidden');
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-    const btn = Array.from(document.querySelectorAll('.nav-item')).find(el => el.getAttribute('onclick').includes(viewId));
-    if(btn) btn.classList.add('active');
+    document.querySelectorAll('.nav-item').forEach(el => {
+        if(el.getAttribute('onclick') && el.getAttribute('onclick').includes(viewId)) {
+            el.classList.add('active');
+        }
+    });
     
     if(viewId === 'dashboard') updateDashboard();
     if(viewId === 'listagens') switchListing('clients');
@@ -332,36 +330,43 @@ function loadSettings() {
 
 function saveCompanyData(e) {
     e.preventDefault();
-    const companyData = {
-        name: document.getElementById('conf-company-name').value,
-        cnpj: document.getElementById('conf-cnpj').value,
-        address: document.getElementById('conf-address').value,
-        phone: document.getElementById('conf-phone').value,
-        whatsapp: document.getElementById('conf-whatsapp').value,
-        role: document.getElementById('conf-role').value,
-        url_fiscal: document.getElementById('conf-url-fiscal').value,
-        url_das: document.getElementById('conf-url-das').value,
-        reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
-        prolabore_target: parseFloat(document.getElementById('conf-prolabore-target').value)
-    };
-    appData.currentUser.company = companyData;
-    
-    const supplierId = 'sup_own_' + appData.currentUser.id;
-    const supplierData = {
-        id: supplierId, name: companyData.name + " (Minha Empresa)",
-        cnpj_cpf: companyData.cnpj, phone: companyData.phone,
-        address: companyData.address, email: appData.currentUser.email,
-        contact_person: appData.currentUser.name, is_own_company: true
-    };
-    const suppliersList = getUserData().suppliers;
-    const supIndex = suppliersList.findIndex(s => s.id === supplierId);
-    if(supIndex >= 0) suppliersList[supIndex] = supplierData; else suppliersList.push(supplierData);
-
-    saveData(); alert('Dados salvos e cadastro de fornecedor atualizado!');
+    try {
+        const companyData = {
+            name: document.getElementById('conf-company-name').value,
+            cnpj: document.getElementById('conf-cnpj').value,
+            address: document.getElementById('conf-address').value,
+            phone: document.getElementById('conf-phone').value,
+            whatsapp: document.getElementById('conf-whatsapp').value,
+            role: document.getElementById('conf-role').value,
+            url_fiscal: document.getElementById('conf-url-fiscal').value,
+            url_das: document.getElementById('conf-url-das').value,
+            reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
+            prolabore_target: parseFloat(document.getElementById('conf-prolabore-target').value)
+        };
+        appData.currentUser.company = companyData;
+        
+        const supplierId = 'sup_own_' + appData.currentUser.id;
+        const supplierData = {
+            id: supplierId, name: companyData.name + " (Minha Empresa)",
+            cnpj_cpf: companyData.cnpj, phone: companyData.phone,
+            address: companyData.address, email: appData.currentUser.email,
+            contact_person: appData.currentUser.name, is_own_company: true
+        };
+        const userData = getUserData();
+        if(userData) {
+            const suppliersList = userData.suppliers;
+            const supIndex = suppliersList.findIndex(s => s.id === supplierId);
+            if(supIndex >= 0) suppliersList[supIndex] = supplierData; else suppliersList.push(supplierData);
+            saveData(); 
+            alert('Dados salvos!');
+        }
+    } catch(err) { alert('Erro ao salvar empresa: ' + err.message); }
 }
 
 function updateDashboard() {
-    const t = getUserData().transactions; 
+    const userData = getUserData();
+    if (!userData) return;
+    const t = userData.transactions; 
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
     const reserveRate = appData.currentUser.company.reserve_rate || 10;
@@ -394,8 +399,10 @@ function updateDashboard() {
 }
 
 function renderAgenda(filter = '') {
-    if(!getUserData().appointments) getUserData().appointments = [];
-    let list = getUserData().appointments.sort((a,b) => new Date(a.date+'T'+a.time) - new Date(b.date+'T'+b.time));
+    const userData = getUserData();
+    if (!userData) return;
+    if(!userData.appointments) userData.appointments = [];
+    let list = userData.appointments.sort((a,b) => new Date(a.date+'T'+a.time) - new Date(b.date+'T'+b.time));
 
     if (filter === 'today') {
         const today = new Date().toISOString().split('T')[0];
@@ -485,24 +492,26 @@ function fillAppointmentClient() {
 
 function saveAppointment(e) {
     e.preventDefault();
-    const id = document.getElementById('appt-id').value;
-    const data = {
-        id: id || 'appt_' + Date.now(),
-        title: document.getElementById('appt-title').value,
-        date: document.getElementById('appt-date').value,
-        time: document.getElementById('appt-time').value,
-        client_name: document.getElementById('appt-client-name').value,
-        client_phone: document.getElementById('appt-client-phone').value,
-        service_desc: document.getElementById('appt-desc').value,
-        value: document.getElementById('appt-value').value || 0,
-        status: document.getElementById('appt-status').value,
-        pay_method: document.getElementById('appt-pay-method').value,
-        pay_status: document.getElementById('appt-pay-status').value,
-        obs: document.getElementById('appt-obs').value
-    };
-    const list = getUserData().appointments;
-    if (id) { const idx = list.findIndex(x => x.id === id); if(idx !== -1) list[idx] = data; } else { list.push(data); }
-    saveData(); closeModal('modal-appointment'); renderAgenda();
+    try {
+        const id = document.getElementById('appt-id').value;
+        const data = {
+            id: id || 'appt_' + Date.now(),
+            title: document.getElementById('appt-title').value,
+            date: document.getElementById('appt-date').value,
+            time: document.getElementById('appt-time').value,
+            client_name: document.getElementById('appt-client-name').value,
+            client_phone: document.getElementById('appt-client-phone').value,
+            service_desc: document.getElementById('appt-desc').value,
+            value: document.getElementById('appt-value').value || 0,
+            status: document.getElementById('appt-status').value,
+            pay_method: document.getElementById('appt-pay-method').value,
+            pay_status: document.getElementById('appt-pay-status').value,
+            obs: document.getElementById('appt-obs').value
+        };
+        const list = getUserData().appointments;
+        if (id) { const idx = list.findIndex(x => x.id === id); if(idx !== -1) list[idx] = data; } else { list.push(data); }
+        saveData(); closeModal('modal-appointment'); renderAgenda();
+    } catch(err) { alert('Erro ao salvar agendamento: ' + err.message); }
 }
 
 function editAppointment(id) { const appt = getUserData().appointments.find(a => a.id === id); if(appt) openAppointmentModal(appt); }
@@ -555,24 +564,26 @@ function calculateRPA() {
 }
 
 function saveRPA() {
-    const id = document.getElementById('rpa-id').value;
-    const rpa = {
-        id: id || 'rpa_' + Date.now(),
-        date: document.getElementById('rpa-date').value,
-        provider: document.getElementById('rpa-prov-name').value,
-        desc: document.getElementById('rpa-desc').value,
-        value: document.getElementById('rpa-value').value,
-        net: document.getElementById('rpa-net').value,
-        fullData: {
-            provName: document.getElementById('rpa-prov-name').value, provCpf: document.getElementById('rpa-prov-cpf').value,
-            provPhone: document.getElementById('rpa-prov-phone').value, provAddr: document.getElementById('rpa-prov-addr').value,
-            provEmail: document.getElementById('rpa-prov-email').value,
-            inss: document.getElementById('rpa-inss').value, iss: document.getElementById('rpa-iss-val').value, irrf: document.getElementById('rpa-irrf').value
-        }
-    };
-    const list = getUserData().rpas || (getUserData().rpas = []);
-    if(id) { const idx = list.findIndex(r => r.id === id); if(idx !== -1) list[idx] = rpa; else list.push(rpa); } else { list.push(rpa); }
-    saveData(); alert('RPA Salvo!'); toggleRPAHistory();
+    try {
+        const id = document.getElementById('rpa-id').value;
+        const rpa = {
+            id: id || 'rpa_' + Date.now(),
+            date: document.getElementById('rpa-date').value,
+            provider: document.getElementById('rpa-prov-name').value,
+            desc: document.getElementById('rpa-desc').value,
+            value: document.getElementById('rpa-value').value,
+            net: document.getElementById('rpa-net').value,
+            fullData: {
+                provName: document.getElementById('rpa-prov-name').value, provCpf: document.getElementById('rpa-prov-cpf').value,
+                provPhone: document.getElementById('rpa-prov-phone').value, provAddr: document.getElementById('rpa-prov-addr').value,
+                provEmail: document.getElementById('rpa-prov-email').value,
+                inss: document.getElementById('rpa-inss').value, iss: document.getElementById('rpa-iss-val').value, irrf: document.getElementById('rpa-irrf').value
+            }
+        };
+        const list = getUserData().rpas || (getUserData().rpas = []);
+        if(id) { const idx = list.findIndex(r => r.id === id); if(idx !== -1) list[idx] = rpa; else list.push(rpa); } else { list.push(rpa); }
+        saveData(); alert('RPA Salvo!'); toggleRPAHistory();
+    } catch(err) { alert('Erro ao salvar RPA: ' + err.message); }
 }
 
 function sendRPAEmail() {
@@ -645,7 +656,9 @@ function renderCrud(type) {
     currentCrudType = type; 
     document.getElementById('crud-title').innerText = type.toUpperCase(); 
     document.querySelectorAll('.crud-btn').forEach(btn => { btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${type}'`)); });
-    const list = getUserData()[type]; 
+    const userData = getUserData();
+    if (!userData) return;
+    const list = userData[type]; 
     const table = document.getElementById('crud-table'); 
     let h = type.match(/products|services/) ? '<th>Nome</th><th>Desc</th><th>Preço</th>' : '<th>Nome</th><th>Contato</th><th>Info</th>'; 
     table.innerHTML = `<thead><tr>${h}<th>Ações</th></tr></thead><tbody>` + list.map(i => `<tr><td>${i.name}</td><td>${i.description || i.contact_person || '-'}</td><td>${i.price ? 'R$ '+i.price : i.phone}</td><td><button class="action-btn btn-warning" onclick="editCrudItem('${i.id}')">✏️</button> <button class="action-btn btn-danger" onclick="deleteCrudItem('${type}','${i.id}')">🗑️</button></td></tr>`).join('') + `</tbody>`; 
@@ -653,9 +666,46 @@ function renderCrud(type) {
 
 function openCrudModal(isEdit = false, itemData = null) { document.getElementById('modal-crud').classList.remove('hidden'); document.getElementById('crud-id').value = itemData ? itemData.id : ''; const fields = document.getElementById('crud-fields'); if(currentCrudType.match(/products|services/)) { fields.innerHTML = `<label>Nome</label><input name="name" value="${itemData?.name||''}" required><label>Preço</label><input type="number" step="0.01" name="price" value="${itemData?.price||''}" required><label>Descrição</label><textarea name="description" rows="3">${itemData?.description||''}</textarea>`; } else { fields.innerHTML = `<label>Nome/Razão</label><input name="name" value="${itemData?.name||''}" required><label>Contato</label><input name="contact_person" value="${itemData?.contact_person||''}"><label>CPF/CNPJ</label><input name="cnpj_cpf" value="${itemData?.cnpj_cpf||''}"><label>Endereço</label><input name="address" value="${itemData?.address||''}"><label>Telefone</label><input name="phone" value="${itemData?.phone||''}"><label>Email</label><input name="email" value="${itemData?.email||''}">`; } }
 function editCrudItem(id) { const item = getUserData()[currentCrudType].find(i => i.id === id); if (item) openCrudModal(true, item); }
-function saveCrudItem(e) { e.preventDefault(); const id = document.getElementById('crud-id').value; const t = e.target; const item = { id: id || 'i_'+Date.now(), name: t.name.value, price: t.price?.value, description: t.description?.value, contact_person: t.contact_person?.value, phone: t.phone?.value, address: t.address?.value, cnpj_cpf: t.cnpj_cpf?.value, email: t.email?.value }; const list = getUserData()[currentCrudType]; const idx = list.findIndex(i => i.id === id); idx !== -1 ? list[idx] = item : list.push(item); saveData(); closeModal('modal-crud'); renderCrud(currentCrudType); }
+
+function saveCrudItem(e) {
+    e.preventDefault();
+    try {
+        const id = document.getElementById('crud-id').value;
+        const els = e.target.elements;
+        
+        // Uso seguro de elementos do formulário (evita erro se o campo não existir)
+        const item = {
+            id: id || 'i_'+Date.now(),
+            name: els['name'] ? els['name'].value : '',
+            price: els['price'] ? els['price'].value : undefined,
+            description: els['description'] ? els['description'].value : undefined,
+            contact_person: els['contact_person'] ? els['contact_person'].value : undefined,
+            phone: els['phone'] ? els['phone'].value : undefined,
+            address: els['address'] ? els['address'].value : undefined,
+            cnpj_cpf: els['cnpj_cpf'] ? els['cnpj_cpf'].value : undefined,
+            email: els['email'] ? els['email'].value : undefined
+        };
+        
+        const userData = getUserData();
+        if(!userData) throw new Error("Usuário não carregado");
+        
+        const list = userData[currentCrudType];
+        const idx = list.findIndex(i => i.id === id);
+        if(idx !== -1) list[idx] = item; else list.push(item);
+        
+        saveData();
+        closeModal('modal-crud');
+        renderCrud(currentCrudType);
+    } catch(err) {
+        alert("Erro ao salvar item: " + err.message);
+    }
+}
+
 function deleteCrudItem(t,id){ if(confirm('Apagar?')){const l=getUserData()[t]; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderCrud(t);} }
-function getUserData() { return appData.records[appData.currentUser.id]; }
+function getUserData() { 
+    if (!appData.currentUser) return null;
+    return appData.records[appData.currentUser.id]; 
+}
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 function checkLicense() { const d = Math.ceil((appData.currentUser.licenseExpire - Date.now())/86400000); document.getElementById('license-days-display').innerText = d>0?d+' dias':'Expirado'; document.getElementById('license-warning').classList.toggle('hidden', d>0); }
 function generateLicenseCode() { document.getElementById('license-random-code').value = Math.floor(Math.random()*900)+100; }
@@ -689,7 +739,9 @@ function filterFinance(filter) {
 }
 
 function renderTransactions(){ 
-    let l = getUserData().transactions.sort((a,b)=>new Date(b.date)-new Date(a.date)); 
+    const userData = getUserData();
+    if (!userData) return;
+    let l = userData.transactions.sort((a,b)=>new Date(b.date)-new Date(a.date)); 
     if (currentFinanceFilter !== 'all') { l = l.filter(t => t.type === currentFinanceFilter); }
     document.querySelector('#finance-table tbody').innerHTML = l.length > 0 ? 
         l.map(t=>`<tr><td>${t.date}</td><td>${t.type}</td><td>${t.category}</td><td>${t.obs||'-'}</td><td>R$ ${t.value}</td><td><button onclick="editTransaction('${t.id}')">✏️</button><button onclick="deleteTransaction('${t.id}')">🗑️</button></td></tr>`).join('') :
@@ -709,7 +761,27 @@ function editTransaction(id){
     document.getElementById('modal-transaction').classList.remove('hidden'); 
 }
 
-function saveTransaction(e){ e.preventDefault(); const id=document.getElementById('trans-id').value; const t={id:id||'t_'+Date.now(), type:document.getElementById('trans-type').value, category:document.getElementById('trans-category').value, value:parseFloat(document.getElementById('trans-value').value), date:document.getElementById('trans-date').value, obs:document.getElementById('trans-obs').value, entity:document.getElementById('trans-entity').value}; const l=getUserData().transactions; const i=l.findIndex(x=>x.id===t.id); i!==-1?l[i]=t:l.push(t); saveData(); closeModal('modal-transaction'); renderTransactions(); }
+function saveTransaction(e){ 
+    e.preventDefault(); 
+    try {
+        const id=document.getElementById('trans-id').value; 
+        const t={
+            id:id||'t_'+Date.now(), 
+            type:document.getElementById('trans-type').value, 
+            category:document.getElementById('trans-category').value, 
+            value:parseFloat(document.getElementById('trans-value').value), 
+            date:document.getElementById('trans-date').value, 
+            obs:document.getElementById('trans-obs').value, 
+            entity:document.getElementById('trans-entity').value
+        }; 
+        const userData = getUserData();
+        const l=userData.transactions; 
+        const i=l.findIndex(x=>x.id===t.id); 
+        i!==-1?l[i]=t:l.push(t); 
+        saveData(); closeModal('modal-transaction'); renderTransactions(); 
+    } catch(err) { alert("Erro ao salvar transação: " + err.message); }
+}
+
 function deleteTransaction(id){ if(confirm('Apagar?')){const l=getUserData().transactions; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderTransactions();} }
 
 function updateTransactionDependencies(){
@@ -717,7 +789,9 @@ function updateTransactionDependencies(){
     const cats = type==='receita'?['Venda','Serviço','Outros']:['Compra','Despesa','Imposto', 'Gastos Pessoais']; 
     document.getElementById('trans-category').innerHTML=cats.map(c=>`<option>${c}</option>`).join('');
     const select = document.getElementById('trans-entity');
-    const list = type === 'receita' ? getUserData().clients : getUserData().suppliers;
+    const userData = getUserData();
+    if (!userData) return;
+    const list = type === 'receita' ? userData.clients : userData.suppliers;
     if (list && list.length > 0) { select.innerHTML = '<option value="">Selecione...</option>' + list.map(i => `<option value="${i.name}">${i.name}</option>`).join(''); } 
     else { select.innerHTML = '<option value="">Sem cadastros disponíveis</option>'; }
 }
@@ -727,15 +801,15 @@ function openTransactionModal(){ document.getElementById('form-transaction').res
 function switchListing(t){ 
     currentListingType=t; 
     document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); if(b.getAttribute('onclick').includes(`'${t}'`)) b.classList.add('active'); });
-    
     document.getElementById('movements-filter').classList.toggle('hidden', t !== 'movimentacoes');
-    
     renderListingTable();
 }
 
 function renderListingTable() {
     const t = currentListingType;
-    let data = t === 'movimentacoes' ? getUserData().transactions : getUserData()[t];
+    const userData = getUserData();
+    if (!userData) return;
+    let data = t === 'movimentacoes' ? userData.transactions : userData[t];
     
     if (t === 'movimentacoes') {
         const monthFilter = document.getElementById('listing-month-filter').value; 
@@ -776,10 +850,12 @@ function editIrrfRow(id) {
 }
 function saveIrrfRow(e){ 
     e.preventDefault(); 
-    const id = document.getElementById('irrf-id').value;
-    const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target[3].value) };
-    if (id) { const idx = appData.irrfTable.findIndex(r => r.id === id); if (idx !== -1) appData.irrfTable[idx] = data; } else { appData.irrfTable.push(data); }
-    saveData(); closeModal('modal-irrf'); renderIrrf(); 
+    try {
+        const id = document.getElementById('irrf-id').value;
+        const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target[3].value) };
+        if (id) { const idx = appData.irrfTable.findIndex(r => r.id === id); if (idx !== -1) appData.irrfTable[idx] = data; } else { appData.irrfTable.push(data); }
+        saveData(); closeModal('modal-irrf'); renderIrrf(); 
+    } catch(err) { alert(err.message); }
 }
 
 // --- GESTÃO DE USUÁRIOS E CRÉDITOS ---
@@ -816,11 +892,8 @@ function openCreditModal(userId, userName) {
     document.getElementById('credit-user-display').innerText = `Usuário: ${userName}`;
     document.getElementById('credit-days-input').value = '';
     document.getElementById('credit-date-input').value = '';
-    
-    // Reset para modo padrão (dias)
     document.querySelector('input[name="creditType"][value="days"]').checked = true;
     toggleCreditMode();
-    
     document.getElementById('modal-credits').classList.remove('hidden');
 }
 
@@ -836,49 +909,47 @@ function toggleCreditMode() {
 }
 
 function saveUserCredits() {
-    const userId = document.getElementById('credit-user-id').value;
-    const mode = document.querySelector('input[name="creditType"]:checked').value;
-    const userIndex = appData.users.findIndex(u => u.id === userId);
-    
-    if (userIndex === -1) return alert('Usuário não encontrado.');
-    
-    const user = appData.users[userIndex];
-    const now = Date.now();
-    let newLicenseDate = 0;
-
-    if (mode === 'days') {
-        const daysToAdd = parseInt(document.getElementById('credit-days-input').value);
-        if (!daysToAdd || isNaN(daysToAdd)) return alert('Digite um número válido de dias.');
+    try {
+        const userId = document.getElementById('credit-user-id').value;
+        const mode = document.querySelector('input[name="creditType"]:checked').value;
+        const userIndex = appData.users.findIndex(u => u.id === userId);
         
-        if (user.licenseExpire < now) {
-            newLicenseDate = now + (daysToAdd * 86400000);
+        if (userIndex === -1) return alert('Usuário não encontrado.');
+        
+        const user = appData.users[userIndex];
+        const now = Date.now();
+        let newLicenseDate = 0;
+
+        if (mode === 'days') {
+            const daysToAdd = parseInt(document.getElementById('credit-days-input').value);
+            if (!daysToAdd || isNaN(daysToAdd)) return alert('Digite um número válido de dias.');
+            
+            if (user.licenseExpire < now) {
+                newLicenseDate = now + (daysToAdd * 86400000);
+            } else {
+                newLicenseDate = user.licenseExpire + (daysToAdd * 86400000);
+            }
         } else {
-            newLicenseDate = user.licenseExpire + (daysToAdd * 86400000);
+            const dateInput = document.getElementById('credit-date-input').value;
+            if (!dateInput) return alert('Selecione uma data válida.');
+            newLicenseDate = new Date(dateInput + 'T23:59:59').getTime();
+            if (newLicenseDate < now) return alert('A data selecionada já passou!');
         }
-    } else {
-        const dateInput = document.getElementById('credit-date-input').value;
-        if (!dateInput) return alert('Selecione uma data válida.');
-        
-        newLicenseDate = new Date(dateInput + 'T23:59:59').getTime();
-        
-        if (newLicenseDate < now) return alert('A data selecionada já passou!');
-    }
 
-    user.licenseExpire = newLicenseDate;
-    appData.users[userIndex] = user;
-    
-    if (appData.currentUser && appData.currentUser.id === userId) {
-        appData.currentUser = user;
-        checkLicense();
-    }
+        user.licenseExpire = newLicenseDate;
+        appData.users[userIndex] = user;
+        
+        if (appData.currentUser && appData.currentUser.id === userId) {
+            appData.currentUser = user;
+            checkLicense();
+        }
 
-    saveData();
-    renderUserList(); 
-    closeModal('modal-credits');
-    alert('Licença atualizada com sucesso!');
+        saveData();
+        renderUserList(); 
+        closeModal('modal-credits');
+        alert('Licença atualizada com sucesso!');
+    } catch(err) { alert("Erro ao salvar créditos: " + err.message); }
 }
-
-// --- MÓDULO DE LEMBRETES COM AUTOMAÇÃO (V12.3: CLOUD FUNCTION PREP + EDIÇÃO) ---
 
 function initReminderSystem() {
     if (checkInterval) clearInterval(checkInterval);
@@ -887,19 +958,18 @@ function initReminderSystem() {
 
 function checkReminders() {
     if (!appData.currentUser) return;
-    
-    const reminders = getUserData().reminders || [];
+    const userData = getUserData();
+    if (!userData) return;
+
+    const reminders = userData.reminders || [];
     const now = new Date();
     let changed = false;
 
-    // Alerta visual local (Fallback)
     reminders.forEach(r => {
         const due = new Date(r.dateTime);
         if (due <= now) {
-            triggerAlert(r); // Alerta UI
-            r.dateTime = calculateNextDate(r.dateTime, r.period); // Atualiza data
-            // Nota: O envio real do email deve ser feito pela Cloud Function (Backend)
-            // para garantir entrega mesmo com navegador fechado.
+            triggerAlert(r); 
+            r.dateTime = calculateNextDate(r.dateTime, r.period); 
             changed = true;
         }
     });
@@ -945,54 +1015,52 @@ function calculateNextDate(currentDateStr, period) {
 
 function saveReminder(e) {
     e.preventDefault();
-    const id = document.getElementById('rem-id').value;
-    const title = document.getElementById('rem-title').value;
-    const dateTime = document.getElementById('rem-datetime').value;
-    const email = document.getElementById('rem-email').value;
-    const msg = document.getElementById('rem-msg').value;
-    const period = document.getElementById('rem-period').value;
-    const immediate = document.getElementById('rem-immediate').checked;
+    try {
+        const id = document.getElementById('rem-id').value;
+        const title = document.getElementById('rem-title').value;
+        const dateTime = document.getElementById('rem-datetime').value;
+        const email = document.getElementById('rem-email').value;
+        const msg = document.getElementById('rem-msg').value;
+        const period = document.getElementById('rem-period').value;
+        const immediate = document.getElementById('rem-immediate').checked;
 
-    if (!title || !dateTime || !email) return alert('Preencha os campos obrigatórios');
+        if (!title || !dateTime || !email) return alert('Preencha os campos obrigatórios');
 
-    const reminder = {
-        id: id || 'rem_' + Date.now(),
-        title,
-        dateTime,
-        email,
-        msg,
-        period,
-        emailStatus: 'pending' // Campo auxiliar para a Cloud Function
-    };
+        const reminder = {
+            id: id || 'rem_' + Date.now(),
+            title, dateTime, email, msg, period,
+            emailStatus: 'pending' 
+        };
+        
+        const userData = getUserData();
+        if (!userData.reminders) userData.reminders = [];
+        const list = userData.reminders;
 
-    if (!getUserData().reminders) getUserData().reminders = [];
-    const list = getUserData().reminders;
+        if (id) {
+            const idx = list.findIndex(r => r.id === id);
+            if (idx !== -1) list[idx] = reminder;
+        } else {
+            list.push(reminder);
+        }
 
-    if (id) {
-        // Modo Edição
-        const idx = list.findIndex(r => r.id === id);
-        if (idx !== -1) list[idx] = reminder;
-    } else {
-        // Modo Criação
-        list.push(reminder);
-    }
+        saveData();
 
-    saveData();
-
-    if (immediate) {
-        const subject = `Lembrete: ${title}`;
-        const body = `Olá,\n\nEste é um lembrete configurado:\n\n${msg}\n\nData: ${new Date(dateTime).toLocaleString()}\nPeriodicidade: ${period}`;
-        window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    } else {
-        alert('Lembrete Salvo!');
-    }
-    
-    cancelReminderEdit(); // Limpa e restaura o form
-    renderRemindersList();
+        if (immediate) {
+            const subject = `Lembrete: ${title}`;
+            const body = `Olá,\n\nEste é um lembrete configurado:\n\n${msg}\n\nData: ${new Date(dateTime).toLocaleString()}\nPeriodicidade: ${period}`;
+            window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        } else {
+            alert('Lembrete Salvo!');
+        }
+        
+        cancelReminderEdit(); 
+        renderRemindersList();
+    } catch(err) { alert("Erro ao salvar lembrete: " + err.message); }
 }
 
 function editReminder(index) {
-    const r = getUserData().reminders[index];
+    const userData = getUserData();
+    const r = userData.reminders[index];
     if (r) {
         document.getElementById('rem-id').value = r.id;
         document.getElementById('rem-title').value = r.title;
@@ -1001,7 +1069,6 @@ function editReminder(index) {
         document.getElementById('rem-msg').value = r.msg;
         document.getElementById('rem-period').value = r.period;
         
-        // Ajuste UI
         document.getElementById('rem-form-title').innerText = "✏️ Editando Lembrete";
         document.getElementById('rem-btn-save').innerText = "Atualizar Lembrete";
         document.getElementById('rem-btn-cancel').classList.remove('hidden');
@@ -1018,14 +1085,15 @@ function cancelReminderEdit() {
     document.getElementById('rem-period').value = "once";
     document.getElementById('rem-immediate').checked = false;
 
-    // Reset UI
     document.getElementById('rem-form-title').innerText = "🔔 Novo Lembrete";
     document.getElementById('rem-btn-save').innerText = "Salvar Lembrete Automático";
     document.getElementById('rem-btn-cancel').classList.add('hidden');
 }
 
 function renderRemindersList() {
-    const list = getUserData().reminders || [];
+    const userData = getUserData();
+    if(!userData) return;
+    const list = userData.reminders || [];
     const tbody = document.getElementById('reminders-tbody');
     tbody.innerHTML = '';
 
@@ -1061,7 +1129,8 @@ function translatePeriod(p) {
 
 function deleteReminder(index) {
     if (confirm('Excluir lembrete?')) {
-        getUserData().reminders.splice(index, 1);
+        const userData = getUserData();
+        userData.reminders.splice(index, 1);
         saveData();
         renderRemindersList();
     }

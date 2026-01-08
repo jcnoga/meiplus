@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!-- 
-    GESTOR MEI - VERSÃO V12.3 (CÓDIGO COMPLETO)
+    GESTOR MEI - VERSÃO V12.6 (FIX SAVEDATA REFERENCE ERROR)
     
     INTEGRAÇÃO TOTAL:
     - HTML Estruturado
@@ -12,19 +12,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor MEI - Sistema Completo V12.3</title>
+    <title>Gestor MEI - Sistema Completo V12.6</title>
     
-    <!-- FIREBASE SDK (Compatível com GitHub Pages) -->
+    <!-- FIREBASE SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
-    <!-- Folha de Estilos Externa -->
-    <link rel="stylesheet" href="style.css">
+    <!-- Folha de Estilos Externa com Cache Busting -->
+    <link rel="stylesheet" href="style.css?v=12.6">
 </head>
 <body>
 
-    <!-- TELA DE AUTENTICAÇÃO (LOGIN/REGISTRO) -->
+    <!-- LOADING OVERLAY -->
+    <div id="loading-overlay">
+        <div class="loader"></div>
+        <p>Carregando Gestor MEI...</p>
+    </div>
+
+    <!-- TELA DE AUTENTICAÇÃO -->
     <div id="auth-screen">
         <div class="auth-card">
             <h2 class="text-center" style="margin-bottom: 1.5rem;">Gestor MEI</h2>
@@ -49,7 +55,7 @@
         </div>
     </div>
 
-    <!-- APLICAÇÃO PRINCIPAL (SIDEBAR + CONTEÚDO) -->
+    <!-- APLICAÇÃO PRINCIPAL -->
     <div id="app-container" class="hidden">
         
         <!-- BARRA LATERAL (MENU) -->
@@ -547,7 +553,7 @@
         </div>
     </div>
 
-    <!-- Script Principal -->
-    <script src="script.js"></script>
+    <!-- Script Principal com Cache Busting -->
+    <script src="script.js?v=12.6"></script>
 </body>
 </html>
