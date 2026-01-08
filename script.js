@@ -1,7 +1,7 @@
 const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional";
 const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
-const DB_KEY = 'MEI_SYSTEM_V12_6'; // Versão atualizada
-const ADMIN_EMAIL = 'jcnvap@gmail.com'; 
+const DB_KEY = 'MEI_SYSTEM_V12_7'; 
+const ADMIN_EMAILS = ['jcnvap@gmail.com', 'jcnval@gmail.com']; // Lista de Admins atualizada
 
 const LIC_PAD_VAL = 13;
 const LIC_MULT_FACTOR = 9;
@@ -106,12 +106,9 @@ const DataManager = {
     }
 };
 
-// --- FIX CRÍTICO: FUNÇÃO GLOBAL DE SALVAMENTO ---
-// Esta função estava faltando, causando o erro "saveData is not defined"
 async function saveData() {
     await DataManager.save(appData);
 }
-// ------------------------------------------------
 
 // Inicialização Firebase
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey && firebaseConfig.apiKey !== "SUA_API_KEY_AQUI") {
@@ -200,6 +197,41 @@ async function loginUser(user) {
     loadFiscalReminders();
     initReminderSystem(); 
     saveData(); 
+}
+
+// --- FUNÇÃO DE SINCRONIZAÇÃO MANUAL (NOVO) ---
+async function manualSync() {
+    if (!appData.currentUser) return;
+    
+    const btn = document.querySelector('.btn-sync');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Sincronizando...';
+    btn.disabled = true;
+
+    try {
+        if (!navigator.onLine) throw new Error("Sem conexão com a internet.");
+        
+        // 1. Tenta baixar dados mais recentes da nuvem
+        const cloudData = await DataManager.pullCloudData(appData.currentUser.id);
+        if (cloudData) {
+            // Se houver, mescla (simplesmente atualiza o local por enquanto)
+            appData = cloudData;
+            const updatedUser = appData.users.find(u => u.id === appData.currentUser.id);
+            if(updatedUser) appData.currentUser = updatedUser;
+        }
+
+        // 2. Envia o estado atual (possivelmente mesclado) de volta para garantir consistência
+        await DataManager.save(appData);
+        
+        alert('Sincronização com a nuvem concluída com sucesso!');
+        // Atualiza a tela atual para refletir dados novos
+        navTo(currentView); 
+    } catch (e) {
+        alert('Erro na sincronização: ' + e.message);
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
 }
 
 function logout() { 
@@ -305,7 +337,8 @@ function navTo(viewId) {
     }
     if(viewId === 'configuracoes') {
         loadSettings();
-        if(appData.currentUser.email === ADMIN_EMAIL) {
+        // Verificação de Admin atualizada para lista de e-mails
+        if(ADMIN_EMAILS.includes(appData.currentUser.email)) {
             document.getElementById('admin-panel').classList.remove('hidden');
         } else {
             document.getElementById('admin-panel').classList.add('hidden');
@@ -322,6 +355,8 @@ function loadSettings() {
     document.getElementById('conf-address').value = c.address||''; 
     document.getElementById('conf-phone').value = c.phone||''; 
     document.getElementById('conf-whatsapp').value = c.whatsapp||'';
+    // Carrega novo campo de email do autônomo
+    document.getElementById('conf-auth-email').value = c.auth_email || ''; 
     document.getElementById('conf-url-fiscal').value = c.url_fiscal || DEFAULT_URL_FISCAL;
     document.getElementById('conf-url-das').value = c.url_das || DEFAULT_URL_DAS;
     document.getElementById('conf-reserve-rate').value = c.reserve_rate || 10;
@@ -338,6 +373,7 @@ function saveCompanyData(e) {
             phone: document.getElementById('conf-phone').value,
             whatsapp: document.getElementById('conf-whatsapp').value,
             role: document.getElementById('conf-role').value,
+            auth_email: document.getElementById('conf-auth-email').value, // Salva novo campo
             url_fiscal: document.getElementById('conf-url-fiscal').value,
             url_das: document.getElementById('conf-url-das').value,
             reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
@@ -522,14 +558,15 @@ function loadRPAOptions() {
     document.getElementById('rpa-comp-name').value = comp.name || '';
     document.getElementById('rpa-comp-cnpj').value = comp.cnpj || '';
     document.getElementById('rpa-comp-addr').value = comp.address || '';
+    // Usa nome e email do usuário se não houver um prestador selecionado
     if(!document.getElementById('rpa-prov-name').value) document.getElementById('rpa-prov-name').value = appData.currentUser.name;
+    if(!document.getElementById('rpa-prov-email').value) document.getElementById('rpa-prov-email').value = comp.auth_email || '';
 
     const select = document.getElementById('rpa-provider-select');
     select.innerHTML = '<option value="">Selecione um Autônomo...</option>';
     getUserData().suppliers.forEach(s => select.innerHTML += `<option value="${s.id}">${s.name}</option>`);
     document.getElementById('rpa-date').valueAsDate = new Date();
     document.getElementById('rpa-id').value = '';
-    document.getElementById('rpa-prov-email').value = ''; 
 }
 
 function fillRPAProvider() {

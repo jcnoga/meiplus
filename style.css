@@ -72,6 +72,14 @@ aside h2 { margin-bottom: 2rem; text-align: center; font-size: 1.5rem; }
 .nav-item:hover, .nav-item.active { background-color: #374151; }
 .user-info { margin-top: auto; padding-top: 1rem; border-top: 1px solid #374151; font-size: 0.875rem; }
 
+/* Botão Sync Manual na Sidebar */
+.btn-sync { 
+    background-color: #374151; color: white; border: 1px solid #4b5563; 
+    padding: 0.4rem; border-radius: 0.25rem; width: 100%; margin-top: 0.5rem;
+    font-size: 0.8rem; display: flex; justify-content: center; align-items: center; gap: 5px;
+}
+.btn-sync:hover { background-color: #4b5563; }
+
 main { flex: 1; overflow-y: auto; padding: 1.5rem; position: relative; width: 100%; }
 .view-header { margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 
