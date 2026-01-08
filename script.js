@@ -1,12 +1,14 @@
 const DEFAULT_URL_FISCAL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional";
 const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgmei.app/Identificacao";
-const DB_KEY = 'MEI_SYSTEM_V12_7'; 
-const ADMIN_EMAILS = ['jcnvap@gmail.com', 'jcnval@gmail.com']; // Lista de Admins atualizada
+const DB_KEY = 'MEI_SYSTEM_V12_8'; 
+const ADMIN_EMAILS = ['jcnvap@gmail.com', 'jcnval@gmail.com']; 
 
 const LIC_PAD_VAL = 13;
 const LIC_MULT_FACTOR = 9;
 const LIC_YEAR_BASE = 1954;
 
+// ATENÇÃO: Se estiver usando o Firebase do tutorial, ele pode ter limites.
+// O ideal é criar seu próprio projeto no Firebase e trocar estas chaves.
 const firebaseConfig = {
   apiKey: "AIzaSyBhtwWew_DQNX2TZROUShZz4mjK57pRgQk",
   authDomain: "lembrete-d6c15.firebaseapp.com",
@@ -16,7 +18,6 @@ const firebaseConfig = {
   appId: "1:368296869868:web:c6189a5ab9634029a90ac9",
   measurementId: "G-F5TMMGPK9C"
 };
-
 const DataManager = {
     dbName: 'MEI_DB_HYBRID_V2',
     storeName: 'mei_data',
@@ -36,20 +37,21 @@ const DataManager = {
     },
 
     async save(data) {
-        // Persistência Local (Sempre funciona)
-        try { localStorage.setItem(DB_KEY, JSON.stringify(data)); } catch(e) { console.warn("LocalStorage full"); }
+        // 1. Salva Localmente (Garantia Offline)
+        try { localStorage.setItem(DB_KEY, JSON.stringify(data)); } catch(e) { console.warn("LocalStorage cheiou"); }
 
         try {
             const db = await this.initDB();
             const tx = db.transaction(this.storeName, 'readwrite');
             tx.objectStore(this.storeName).put(data, 'main_data');
-        } catch(e) { console.error("IDB Error", e); }
+        } catch(e) { console.error("Erro IDB Local", e); }
 
-        // Sincronização Cloud
+        // 2. Tenta Sincronizar com a Nuvem
         if (typeof firebase !== 'undefined' && firebase.apps.length && data.currentUser) {
             try {
                 if (navigator.onLine) {
                     const db = firebase.firestore();
+                    // Limpeza profunda do objeto para evitar erros do Firestore
                     const cleanData = JSON.parse(JSON.stringify(data));
                     await db.collection('users').doc(data.currentUser.id).set(cleanData);
                     this.updateSyncStatus(true);
@@ -57,7 +59,8 @@ const DataManager = {
                     this.updateSyncStatus(false);
                 }
             } catch(e) { 
-                console.warn("Cloud Sync Indisponível:", e.message); 
+                console.warn("Erro no Sync Cloud (Modo Offline Ativo):", e.code, e.message);
+                // Não alertar usuário a cada salvamento, apenas mudar status
                 this.updateSyncStatus(false);
             }
         } else {
@@ -70,9 +73,15 @@ const DataManager = {
             try {
                 const db = firebase.firestore();
                 const doc = await db.collection('users').doc(userId).get();
-                if (doc.exists) return doc.data();
+                if (doc.exists) {
+                    console.log("Dados baixados da nuvem.");
+                    return doc.data();
+                }
             } catch (e) {
-                console.warn("Falha ao buscar dados Cloud:", e);
+                console.error("Falha ao baixar dados Cloud:", e);
+                if (e.code === 'permission-denied') {
+                    alert("Erro de Permissão no Firebase: Verifique as Regras do Firestore.");
+                }
             }
         }
         return null;
@@ -88,7 +97,7 @@ const DataManager = {
                 req.onsuccess = () => resolve(req.result);
                 req.onerror = () => resolve(null);
             });
-        } catch(e) { console.warn("IDB Load Fail", e); }
+        } catch(e) { console.warn("Erro carga IDB", e); }
 
         if (!data) {
             const ls = localStorage.getItem(DB_KEY);
@@ -106,19 +115,20 @@ const DataManager = {
     }
 };
 
+// Função Global Requerida
 async function saveData() {
     await DataManager.save(appData);
 }
 
-// Inicialização Firebase
+// Inicialização Firebase Segura
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey && firebaseConfig.apiKey !== "SUA_API_KEY_AQUI") {
     try { 
         firebase.initializeApp(firebaseConfig); 
-        console.log("Firebase Init OK");
+        console.log("Firebase Inicializado");
         firebase.auth().onAuthStateChanged((user) => {
-            if (user) console.log("Auth Firebase: Logado");
+            if (user) console.log("Firebase Auth: OK");
         });
-    } catch(e) { console.error("Firebase Init Error", e); }
+    } catch(e) { console.error("Erro Fatal Firebase Init", e); }
 }
 
 let appData = { currentUser: null, users: [], records: {}, irrfTable: [] };
@@ -181,7 +191,7 @@ async function loginUser(user) {
             if (updatedUser) user = updatedUser;
             DataManager.updateSyncStatus(true);
         }
-    } catch(e) { console.log("Ignorando erro de sync no login inicial"); }
+    } catch(e) { console.log("Login Offline (Cloud falhou ou sem net)"); }
 
     appData.currentUser = user; 
     sessionStorage.setItem('mei_user_id', user.id);
@@ -199,35 +209,41 @@ async function loginUser(user) {
     saveData(); 
 }
 
-// --- FUNÇÃO DE SINCRONIZAÇÃO MANUAL (NOVO) ---
 async function manualSync() {
     if (!appData.currentUser) return;
     
     const btn = document.querySelector('.btn-sync');
     const originalText = btn.innerHTML;
-    btn.innerHTML = '⏳ Sincronizando...';
+    btn.innerHTML = '⏳ Conectando...';
     btn.disabled = true;
 
     try {
         if (!navigator.onLine) throw new Error("Sem conexão com a internet.");
         
-        // 1. Tenta baixar dados mais recentes da nuvem
+        // Teste de conexão com Auth
+        if (!firebase.auth().currentUser) {
+             throw new Error("Sessão Firebase expirada. Faça Logout e Login novamente com Google.");
+        }
+
         const cloudData = await DataManager.pullCloudData(appData.currentUser.id);
         if (cloudData) {
-            // Se houver, mescla (simplesmente atualiza o local por enquanto)
             appData = cloudData;
             const updatedUser = appData.users.find(u => u.id === appData.currentUser.id);
             if(updatedUser) appData.currentUser = updatedUser;
         }
 
-        // 2. Envia o estado atual (possivelmente mesclado) de volta para garantir consistência
         await DataManager.save(appData);
-        
-        alert('Sincronização com a nuvem concluída com sucesso!');
-        // Atualiza a tela atual para refletir dados novos
+        alert('Sincronização OK! Dados salvos na nuvem.');
         navTo(currentView); 
     } catch (e) {
-        alert('Erro na sincronização: ' + e.message);
+        console.error(e);
+        if (e.code === 'unavailable') {
+            alert("Firebase offline ou bloqueado pela rede.");
+        } else if (e.code === 'permission-denied') {
+            alert("Erro de Permissão: Verifique as regras do Firestore e se o domínio está autorizado.");
+        } else {
+            alert('Erro: ' + e.message);
+        }
     } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;
@@ -248,6 +264,9 @@ function toggleAuth(screen) {
 }
 
 function handleGoogleLogin() {
+    // Diagnóstico de ambiente
+    console.log("Tentando login Google em: " + window.location.hostname);
+
     const provider = new firebase.auth.GoogleAuthProvider();
     firebase.auth().signInWithPopup(provider).then(async (result) => {
         const user = result.user;
@@ -269,7 +288,18 @@ function handleGoogleLogin() {
         }
         loginUser(appUser);
     }).catch((error) => {
-        alert("Erro no login Google. Verifique se o domínio foi autorizado no Firebase.\n" + error.message);
+        console.error("Erro Google Auth:", error);
+        
+        if (error.code === 'auth/unauthorized-domain') {
+            alert("ERRO CRÍTICO: DOMÍNIO NÃO AUTORIZADO NO FIREBASE.\n\n" +
+                  "O domínio '" + window.location.hostname + "' não está na lista de autorizados.\n\n" +
+                  "SOLUÇÃO:\n1. Vá no Firebase Console -> Authentication -> Settings -> Authorized Domains.\n" +
+                  "2. Adicione: " + window.location.hostname);
+        } else if (error.code === 'auth/popup-closed-by-user') {
+            alert("Login cancelado pelo usuário.");
+        } else {
+            alert("Erro no Login: " + error.message);
+        }
     });
 }
 
@@ -309,7 +339,7 @@ document.getElementById('register-form').addEventListener('submit', (e) => {
 document.getElementById('login-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const user = appData.users.find(u => u.email === document.getElementById('login-email').value && u.password === document.getElementById('login-password').value);
-    user ? loginUser(user) : alert('Usuário não encontrado ou senha incorreta.');
+    user ? loginUser(user) : alert('Usuário não encontrado ou senha incorreta (Verifique se criou a conta neste dispositivo).');
 });
 
 function navTo(viewId) {
@@ -337,7 +367,6 @@ function navTo(viewId) {
     }
     if(viewId === 'configuracoes') {
         loadSettings();
-        // Verificação de Admin atualizada para lista de e-mails
         if(ADMIN_EMAILS.includes(appData.currentUser.email)) {
             document.getElementById('admin-panel').classList.remove('hidden');
         } else {
@@ -355,7 +384,6 @@ function loadSettings() {
     document.getElementById('conf-address').value = c.address||''; 
     document.getElementById('conf-phone').value = c.phone||''; 
     document.getElementById('conf-whatsapp').value = c.whatsapp||'';
-    // Carrega novo campo de email do autônomo
     document.getElementById('conf-auth-email').value = c.auth_email || ''; 
     document.getElementById('conf-url-fiscal').value = c.url_fiscal || DEFAULT_URL_FISCAL;
     document.getElementById('conf-url-das').value = c.url_das || DEFAULT_URL_DAS;
@@ -373,7 +401,7 @@ function saveCompanyData(e) {
             phone: document.getElementById('conf-phone').value,
             whatsapp: document.getElementById('conf-whatsapp').value,
             role: document.getElementById('conf-role').value,
-            auth_email: document.getElementById('conf-auth-email').value, // Salva novo campo
+            auth_email: document.getElementById('conf-auth-email').value, 
             url_fiscal: document.getElementById('conf-url-fiscal').value,
             url_das: document.getElementById('conf-url-das').value,
             reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
