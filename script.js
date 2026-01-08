@@ -8,13 +8,13 @@ const LIC_MULT_FACTOR = 9;
 const LIC_YEAR_BASE = 1954;
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBdFZ09MoPhwr24bLU8Ts7DBTkkfsApIK8",
-  authDomain: "mei-pro-1376f.firebaseapp.com",
-  projectId: "mei-pro-1376f",
-  storageBucket: "mei-pro-1376f.firebasestorage.app",
-  messagingSenderId: "327978602244",
-  appId: "1:327978602244:web:267232dbfb224d3deb4a51",
-  measurementId: "G-2VMK9V9GHJ"
+  apiKey: "AIzaSyBhtwWew_DQNX2TZROUShZz4mjK57pRgQk",
+  authDomain: "lembrete-d6c15.firebaseapp.com",
+  projectId: "lembrete-d6c15",
+  storageBucket: "lembrete-d6c15.firebasestorage.app",
+  messagingSenderId: "368296869868",
+  appId: "1:368296869868:web:c6189a5ab9634029a90ac9",
+  measurementId: "G-F5TMMGPK9C"
 };
 
 const DataManager = {
