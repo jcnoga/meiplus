@@ -973,4 +973,221 @@ function saveIrrfRow(e){
     } catch(err) { alert(err.message); }
 }
 
+// =========================================================================
+// FUNÇÕES RESTAURADAS (CORREÇÃO DE FUNCIONALIDADE FALTANTE)
+// =========================================================================
+
+function initReminderSystem() {
+    if(checkInterval) clearInterval(checkInterval);
+    checkInterval = setInterval(checkReminders, 60000); // Checa a cada minuto
+}
+
+function checkReminders() {
+    if(!appData.currentUser) return;
+    const reminders = getUserData().reminders || [];
+    const now = new Date();
+    
+    reminders.forEach(r => {
+        if (!r.nextRun) r.nextRun = r.datetime;
+        const target = new Date(r.nextRun);
+        
+        if (now >= target) {
+            // Disparar Alerta
+            document.getElementById('alert-title').innerText = r.title;
+            document.getElementById('alert-msg').innerText = r.msg;
+            document.getElementById('alert-time').innerText = new Date(r.nextRun).toLocaleString();
+            
+            // Link para envio manual de email no alerta
+            const mailto = `mailto:${r.email}?subject=${encodeURIComponent(r.title)}&body=${encodeURIComponent(r.msg)}`;
+            document.getElementById('alert-btn-email').href = mailto;
+            
+            document.getElementById('modal-alert').classList.remove('hidden');
+
+            // Tentar envio automático se configurado (Cloud Function)
+            if(r.immediate) {
+                sendAutoEmail(r.email, r.title, r.msg)
+                    .then(() => console.log(`Lembrete ${r.title} enviado via API`))
+                    .catch(e => console.error("Falha envio auto lembrete:", e));
+            }
+
+            // Atualizar próxima execução
+            const next = new Date(target);
+            switch(r.period) {
+                case 'hourly': next.setHours(next.getHours() + 1); break;
+                case 'daily': next.setDate(next.getDate() + 1); break;
+                case 'weekly': next.setDate(next.getDate() + 7); break;
+                case 'biweekly': next.setDate(next.getDate() + 15); break;
+                case 'monthly': next.setMonth(next.getMonth() + 1); break;
+                case 'yearly': next.setFullYear(next.getFullYear() + 1); break;
+                case 'once': 
+                default:
+                    // Remove se for uma vez só
+                    reminders.splice(reminders.indexOf(r), 1);
+                    saveData();
+                    renderRemindersList();
+                    return; 
+            }
+            r.nextRun = next.toISOString();
+            saveData();
+            renderRemindersList();
+        }
+    });
+}
+
+function renderRemindersList() {
+    const list = getUserData().reminders || [];
+    const tbody = document.getElementById('reminders-tbody');
+    if(!tbody) return;
+    tbody.innerHTML = list.length ? list.map(r => `
+        <tr>
+            <td>${r.title}</td>
+            <td>${new Date(r.nextRun || r.datetime).toLocaleString()}</td>
+            <td>${translatePeriod(r.period)}</td>
+            <td>
+                <button class="action-btn btn-danger" onclick="deleteReminder('${r.id}')">🗑️</button>
+            </td>
+        </tr>
+    `).join('') : '<tr><td colspan="4" class="text-center p-2">Nenhum lembrete configurado.</td></tr>';
+}
+
+function translatePeriod(p) {
+    const map = { 'once': 'Uma vez', 'hourly': 'Por Hora', 'daily': 'Diário', 'weekly': 'Semanal', 'biweekly': 'Quinzenal', 'monthly': 'Mensal', 'yearly': 'Anual' };
+    return map[p] || p;
+}
+
+function saveReminder(e) {
+    e.preventDefault();
+    try {
+        const id = document.getElementById('rem-id').value;
+        const rem = {
+            id: id || 'rem_' + Date.now(),
+            title: document.getElementById('rem-title').value,
+            datetime: document.getElementById('rem-datetime').value,
+            period: document.getElementById('rem-period').value,
+            email: document.getElementById('rem-email').value,
+            msg: document.getElementById('rem-msg').value,
+            immediate: document.getElementById('rem-immediate').checked,
+            nextRun: document.getElementById('rem-datetime').value
+        };
+
+        const userData = getUserData();
+        if(!userData.reminders) userData.reminders = [];
+        
+        if(id) {
+            const idx = userData.reminders.findIndex(r => r.id === id);
+            if(idx !== -1) userData.reminders[idx] = rem;
+        } else {
+            userData.reminders.push(rem);
+        }
+
+        // Se marcado "Enviar imediatamente" e for novo
+        if (rem.immediate && !id) {
+            sendAutoEmail(rem.email, rem.title, rem.msg)
+                .then(() => alert("E-mail disparado com sucesso!"))
+                .catch(err => alert("Lembrete salvo, mas erro no envio automático: " + err));
+        }
+
+        saveData();
+        document.querySelector('#view-lembretes form').reset();
+        document.getElementById('rem-id').value = '';
+        renderRemindersList();
+        alert('Lembrete Salvo!');
+    } catch(err) {
+        alert('Erro ao salvar lembrete: ' + err.message);
+    }
+}
+
+function cancelReminderEdit() {
+    document.querySelector('#view-lembretes form').reset();
+    document.getElementById('rem-id').value = '';
+    document.getElementById('rem-btn-cancel').classList.add('hidden');
+    document.getElementById('rem-form-title').innerText = '🔔 Novo Lembrete';
+}
+
+function deleteReminder(id) {
+    if(confirm('Excluir este lembrete?')) {
+        const userData = getUserData();
+        userData.reminders = userData.reminders.filter(r => r.id !== id);
+        saveData();
+        renderRemindersList();
+    }
+}
+
+// --- FUNÇÕES DE ADMINISTRAÇÃO (Faltantes) ---
+
+function openUserManagementModal() {
+    const tbody = document.getElementById('usermgmt-tbody');
+    tbody.innerHTML = '';
+    
+    appData.users.forEach(u => {
+        const daysLeft = Math.ceil((u.licenseExpire - Date.now()) / 86400000);
+        const statusClass = daysLeft > 0 ? 'text-success' : 'text-danger';
+        
+        tbody.innerHTML += `
+            <tr>
+                <td>${u.name}</td>
+                <td>${u.email}</td>
+                <td class="${statusClass}">${daysLeft > 0 ? daysLeft + ' dias' : 'Expirado'}</td>
+                <td>
+                    <button class="action-btn btn-info" onclick="openCreditsModal('${u.id}')">💎 Créditos</button>
+                    <button class="action-btn btn-danger" onclick="deleteUser('${u.id}')">🗑️</button>
+                </td>
+            </tr>
+        `;
+    });
+    
+    document.getElementById('modal-usermgmt').classList.remove('hidden');
+}
+
+function openCreditsModal(userId) {
+    const user = appData.users.find(u => u.id === userId);
+    if (!user) return;
+    
+    document.getElementById('credit-user-id').value = userId;
+    document.getElementById('credit-user-display').innerText = `Usuário: ${user.name} (${user.email})`;
+    document.getElementById('modal-credits').classList.remove('hidden');
+}
+
+function toggleCreditMode() {
+    const mode = document.querySelector('input[name="creditType"]:checked').value;
+    document.getElementById('credit-mode-days').classList.toggle('hidden', mode !== 'days');
+    document.getElementById('credit-mode-date').classList.toggle('hidden', mode !== 'date');
+}
+
+function saveUserCredits() {
+    const userId = document.getElementById('credit-user-id').value;
+    const user = appData.users.find(u => u.id === userId);
+    const mode = document.querySelector('input[name="creditType"]:checked').value;
+    
+    if (user) {
+        if (mode === 'days') {
+            const days = parseInt(document.getElementById('credit-days-input').value);
+            if (!days) return alert("Digite a quantidade de dias.");
+            
+            // Se já expirou, conta a partir de hoje. Se não, soma.
+            const base = user.licenseExpire > Date.now() ? user.licenseExpire : Date.now();
+            user.licenseExpire = base + (days * 86400000);
+        } else {
+            const dateStr = document.getElementById('credit-date-input').value;
+            if (!dateStr) return alert("Selecione uma data.");
+            user.licenseExpire = new Date(dateStr).getTime();
+        }
+        
+        saveData();
+        alert('Licença atualizada com sucesso!');
+        closeModal('modal-credits');
+        openUserManagementModal(); // Recarrega lista
+    }
+}
+
+function deleteUser(userId) {
+    if (userId === appData.currentUser.id) return alert("Você não pode se excluir.");
+    if (confirm("Tem certeza que deseja excluir este usuário e todos os dados dele?")) {
+        appData.users = appData.users.filter(u => u.id !== userId);
+        delete appData.records[userId];
+        saveData();
+        openUserManagementModal();
+    }
+}
+
 init();
