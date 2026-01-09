@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor MEI - Sistema Completo V12.10</title>
+    <title>Gestor MEI - Sistema Completo V12.11</title>
     
     <!-- FIREBASE SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
-    <!-- EMAILJS SDK (IMPORTANTE: Necessário para envio de anexos) -->
+    <!-- EMAILJS SDK -->
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
 
     <!-- Folha de Estilos -->
@@ -33,7 +33,6 @@
                 <input type="password" id="login-password" placeholder="Senha" required>
                 <button type="submit" class="btn-primary w-full">Entrar</button>
                 <div class="mt-4 flex flex-col gap-2">
-                    <!-- ALTERAÇÃO: Texto atualizado para 30 dias -->
                     <button type="button" class="btn-outline w-full" onclick="toggleAuth('register')">Criar Conta (30 dias grátis)</button>
                     <!-- Integração Google -->
                     <button type="button" class="google-btn w-full" onclick="handleGoogleLogin()">Entrar com Google</button>
@@ -44,7 +43,6 @@
                 <input type="text" id="reg-name" placeholder="Seu Nome Completo" required>
                 <input type="email" id="reg-email" placeholder="E-mail" required>
                 <input type="password" id="reg-password" placeholder="Senha" required>
-                <!-- ALTERAÇÃO: Texto atualizado para 30 dias -->
                 <button type="submit" class="btn-success w-full">Cadastrar e Ganhar 30 Dias</button>
                 <button type="button" class="btn-outline w-full mt-4" onclick="toggleAuth('login')">Voltar para Login</button>
             </form>
@@ -398,9 +396,6 @@
                         <div class="flex flex-col"><label style="margin-top:0">Restaurar</label><input type="file" id="restore-file" accept=".json" onchange="restoreBackup(this)"></div>
                     </div>
                 </div>
-                
-                <!-- ALTERAÇÃO: O painel "Licença Pessoal" antigo foi removido daqui -->
-                
             </section>
         </main>
     </div>
@@ -546,6 +541,6 @@
     </div>
 
     <!-- Script Principal -->
-    <script src="script.js?v=12.10"></script>
+    <script src="script.js?v=12.11"></script>
 </body>
 </html>
