@@ -428,7 +428,10 @@ function navTo(viewId) {
     }
     if(viewId === 'configuracoes') {
         loadSettings();
-        if(ADMIN_EMAILS.includes(appData.currentUser.email)) {
+        // FIX: Normaliza e-mail para minúsculas para evitar erro de Case Sensitivity no GitHub Pages
+        const userEmail = appData.currentUser && appData.currentUser.email ? appData.currentUser.email.toLowerCase() : '';
+        // Verifica se o email normalizado está na lista de admins
+        if(ADMIN_EMAILS.includes(userEmail)) {
             document.getElementById('admin-panel').classList.remove('hidden');
         } else {
             document.getElementById('admin-panel').classList.add('hidden');
@@ -974,7 +977,7 @@ function saveIrrfRow(e){
 }
 
 // =========================================================================
-// FUNÇÕES RESTAURADAS (CORREÇÃO DE FUNCIONALIDADE FALTANTE)
+// FUNÇÕES RESTAURADAS & CORREÇÕES PARA GITHUB PAGES
 // =========================================================================
 
 function initReminderSystem() {
@@ -1113,21 +1116,40 @@ function deleteReminder(id) {
     }
 }
 
-// --- FUNÇÕES DE ADMINISTRAÇÃO (Faltantes) ---
+// --- FUNÇÕES DE ADMINISTRAÇÃO (Corrigidas para Robustez) ---
 
 function openUserManagementModal() {
+    console.log("Tentando abrir modal de gestão de usuários..."); // Log para Debug no GitHub Pages
+
+    if (!appData || !appData.users) {
+        console.error("Erro: appData.users indefinido");
+        alert("Erro ao carregar lista de usuários. Tente sincronizar novamente.");
+        return;
+    }
+
     const tbody = document.getElementById('usermgmt-tbody');
+    if (!tbody) {
+        console.error("Erro HTML: Elemento usermgmt-tbody não encontrado.");
+        return;
+    }
+
     tbody.innerHTML = '';
     
     appData.users.forEach(u => {
-        const daysLeft = Math.ceil((u.licenseExpire - Date.now()) / 86400000);
+        // Cálculo seguro de dias restantes
+        let daysLeft = 0;
+        if (u.licenseExpire) {
+            daysLeft = Math.ceil((u.licenseExpire - Date.now()) / 86400000);
+        }
+        
         const statusClass = daysLeft > 0 ? 'text-success' : 'text-danger';
+        const statusText = daysLeft > 0 ? daysLeft + ' dias' : 'Expirado';
         
         tbody.innerHTML += `
             <tr>
-                <td>${u.name}</td>
-                <td>${u.email}</td>
-                <td class="${statusClass}">${daysLeft > 0 ? daysLeft + ' dias' : 'Expirado'}</td>
+                <td>${u.name || 'Sem nome'}</td>
+                <td>${u.email || '-'}</td>
+                <td class="${statusClass}">${statusText}</td>
                 <td>
                     <button class="action-btn btn-info" onclick="openCreditsModal('${u.id}')">💎 Créditos</button>
                     <button class="action-btn btn-danger" onclick="deleteUser('${u.id}')">🗑️</button>
@@ -1136,7 +1158,13 @@ function openUserManagementModal() {
         `;
     });
     
-    document.getElementById('modal-usermgmt').classList.remove('hidden');
+    const modal = document.getElementById('modal-usermgmt');
+    if (modal) {
+        modal.classList.remove('hidden');
+        console.log("Modal aberto com sucesso.");
+    } else {
+        console.error("Erro HTML: Modal modal-usermgmt não encontrado.");
+    }
 }
 
 function openCreditsModal(userId) {
