@@ -108,6 +108,7 @@ const DataManager = {
         return data;
     },
 
+    // FUNÇÃO REINTRODUZIDA PARA CORRIGIR O ERRO "this.updateSyncStatus is not a function"
     updateSyncStatus(isOnline) {
         const el = document.getElementById('sync-indicator');
         if(el) {
@@ -163,6 +164,9 @@ async function sendAutoEmail(to_email, subject, message, attachment_data = null,
             attachment: attachment_data, 
             filename: attachment_name
         };
+
+        // Debug para verificar o que está sendo enviado
+        console.log("Payload enviado para Cloud Function:", payload);
 
         const response = await fetch(CLOUD_FUNCTION_URL, {
             method: 'POST',
@@ -356,45 +360,61 @@ function createSeedData() {
     };
 }
 
-// CORREÇÃO: Cadastro agora é async e força o salvamento na nuvem
+// CORREÇÃO: Cadastro agora é async, cria usuário no Firebase Auth e salva na nuvem/local
 document.getElementById('register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = document.getElementById('reg-email').value;
-    if (appData.users.find(u => u.email === email)) return alert('E-mail já existe!');
+    const password = document.getElementById('reg-password').value;
+    const name = document.getElementById('reg-name').value;
+
+    // Verificação local rápida (mas o Firebase também checará)
+    if (appData.users.find(u => u.email === email)) return alert('E-mail já existe (Local)!');
     
-    const newUser = {
-        id: 'u_' + Date.now(), 
-        name: document.getElementById('reg-name').value, 
-        email: email,
-        password: document.getElementById('reg-password').value,
-        licenseExpire: new Date().getTime() + (30 * 86400000), // 30 dias
-        company: { reserve_rate: 10, prolabore_target: 4000 }
-    };
+    try {
+        // 1. Criação no Firebase Auth (Painel de Autenticação)
+        let firebaseUid = null;
+        if (typeof firebase !== 'undefined' && navigator.onLine) {
+            const userCredential = await firebase.auth().createUserWithEmailAndPassword(email, password);
+            const user = userCredential.user;
+            await user.updateProfile({ displayName: name });
+            firebaseUid = user.uid;
+        } else {
+            // Fallback para ID manual se offline (embora registro offline não autentique no Firebase)
+            firebaseUid = Date.now().toString(); 
+        }
 
-    // Atualiza estado local
-    appData.users.push(newUser); 
-    appData.records[newUser.id] = createSeedData();
+        // 2. Criação do objeto de usuário seguindo a estrutura existente
+        const newUser = {
+            id: 'u_' + firebaseUid, // Mantém padrão do Google Login
+            name: name, 
+            email: email,
+            password: password, // Mantém para login local/offline (lógica existente)
+            licenseExpire: new Date().getTime() + (30 * 86400000), // 30 dias
+            company: { reserve_rate: 10, prolabore_target: 4000 }
+        };
 
-    // CORREÇÃO: Define o usuário atual IMEDIATAMENTE para permitir o salvamento
-    appData.currentUser = newUser;
+        // Atualiza estado local
+        appData.users.push(newUser); 
+        appData.records[newUser.id] = createSeedData();
 
-    // Persistência Explícita no Firebase (Garantia de Criação)
-    if (typeof firebase !== 'undefined' && navigator.onLine) {
-        try {
+        // Define o usuário atual IMEDIATAMENTE
+        appData.currentUser = newUser;
+
+        // Persistência Explícita no Firestore (Banco de Dados)
+        if (typeof firebase !== 'undefined' && navigator.onLine) {
             const db = firebase.firestore();
-            // Salva os dados completos do usuário recém-criado
-            // Clonamos para evitar erros de referência circular se existirem (boas práticas)
             const userDataToSave = JSON.parse(JSON.stringify(appData));
             await db.collection('users').doc(newUser.id).set(userDataToSave);
             console.log("Novo usuário salvo no Firebase com sucesso.");
-        } catch (err) {
-            console.error("Erro ao salvar novo usuário na nuvem:", err);
-            alert("Atenção: Erro ao salvar na nuvem. Verifique sua conexão.");
         }
-    }
 
-    // Fluxo normal segue (saveData local + Login)
-    saveData().then(() => loginUser(newUser));
+        // Fluxo normal segue (saveData local + Login)
+        saveData().then(() => loginUser(newUser));
+
+    } catch (err) {
+        console.error("Erro no cadastro:", err);
+        alert("Erro ao criar conta: " + err.message);
+    }
 });
 
 document.getElementById('login-form').addEventListener('submit', (e) => {
