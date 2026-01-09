@@ -356,6 +356,7 @@ function createSeedData() {
     };
 }
 
+// CORREÇÃO: Cadastro agora é async e força o salvamento na nuvem
 document.getElementById('register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = document.getElementById('reg-email').value;
@@ -370,13 +371,19 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
         company: { reserve_rate: 10, prolabore_target: 4000 }
     };
 
+    // Atualiza estado local
     appData.users.push(newUser); 
     appData.records[newUser.id] = createSeedData();
+
+    // CORREÇÃO: Define o usuário atual IMEDIATAMENTE para permitir o salvamento
     appData.currentUser = newUser;
 
+    // Persistência Explícita no Firebase (Garantia de Criação)
     if (typeof firebase !== 'undefined' && navigator.onLine) {
         try {
             const db = firebase.firestore();
+            // Salva os dados completos do usuário recém-criado
+            // Clonamos para evitar erros de referência circular se existirem (boas práticas)
             const userDataToSave = JSON.parse(JSON.stringify(appData));
             await db.collection('users').doc(newUser.id).set(userDataToSave);
             console.log("Novo usuário salvo no Firebase com sucesso.");
@@ -386,6 +393,7 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
         }
     }
 
+    // Fluxo normal segue (saveData local + Login)
     saveData().then(() => loginUser(newUser));
 });
 
@@ -395,367 +403,574 @@ document.getElementById('login-form').addEventListener('submit', (e) => {
     user ? loginUser(user) : alert('Usuário não encontrado ou senha incorreta (Verifique se criou a conta neste dispositivo).');
 });
 
-// ... (Restante do código igual) ...
-
-// --- GESTÃO DE USUÁRIOS E CRÉDITOS (CORRIGIDO) ---
-
-// Função agora é ASYNC para buscar dados no Firebase
-async function openUserManagementModal() {
-    await renderUserList();
-    document.getElementById('modal-usermgmt').classList.remove('hidden');
-}
-
-async function renderUserList() {
-    const tbody = document.getElementById('usermgmt-tbody');
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center">Carregando usuários do Firebase...</td></tr>';
-    
-    let allUsers = [];
-
-    // Tenta buscar TODOS os usuários no Firestore se estiver online
-    if (typeof firebase !== 'undefined' && navigator.onLine) {
-        try {
-            const db = firebase.firestore();
-            const snapshot = await db.collection('users').get();
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                // O objeto salvo no firebase tem a estrutura completa (currentUser, users[], etc)
-                // Precisamos extrair o usuário principal desse registro
-                if (data.currentUser) {
-                    allUsers.push(data.currentUser);
-                }
-            });
-        } catch (e) {
-            console.error("Erro ao listar usuários do Firebase:", e);
-            alert("Erro ao buscar lista completa. Mostrando cache local.");
-            allUsers = appData.users; // Fallback para local
+function navTo(viewId) {
+    currentView = viewId;
+    document.querySelectorAll('main section').forEach(el => el.classList.add('hidden'));
+    const target = document.getElementById('view-' + viewId);
+    if(target) target.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(el => {
+        if(el.getAttribute('onclick') && el.getAttribute('onclick').includes(viewId)) {
+            el.classList.add('active');
         }
-    } else {
-        allUsers = appData.users; // Fallback para local
-    }
-
-    tbody.innerHTML = '';
-    
-    if (allUsers.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center">Nenhum usuário encontrado.</td></tr>';
-        return;
-    }
-
-    allUsers.forEach(user => {
-        const daysLeft = Math.ceil((user.licenseExpire - Date.now()) / 86400000);
-        const statusClass = daysLeft > 0 ? 'text-success' : 'text-danger';
-        const statusText = daysLeft > 0 ? `${daysLeft} dias` : 'Expirado';
-        
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td>${user.name}</td>
-            <td>${user.email}</td>
-            <td class="${statusClass} font-bold">${statusText}</td>
-            <td>
-                <button class="action-btn btn-info" onclick="openCreditModal('${user.id}', '${user.name}')">Renovar</button>
-            </td>
-        `;
-        tbody.appendChild(row);
     });
-}
-
-function openCreditModal(userId, userName) {
-    document.getElementById('credit-user-id').value = userId;
-    document.getElementById('credit-user-display').innerText = `Usuário: ${userName}`;
-    document.getElementById('credit-days-input').value = '';
-    document.getElementById('credit-date-input').value = '';
-    document.querySelector('input[name="creditType"][value="days"]').checked = true;
-    toggleCreditMode();
-    document.getElementById('modal-credits').classList.remove('hidden');
-}
-
-function toggleCreditMode() {
-    const mode = document.querySelector('input[name="creditType"]:checked').value;
-    if (mode === 'days') {
-        document.getElementById('credit-mode-days').classList.remove('hidden');
-        document.getElementById('credit-mode-date').classList.add('hidden');
-    } else {
-        document.getElementById('credit-mode-days').classList.add('hidden');
-        document.getElementById('credit-mode-date').classList.remove('hidden');
+    
+    if(viewId === 'dashboard') updateDashboard();
+    if(viewId === 'listagens') switchListing('clients');
+    if(viewId === 'financeiro') renderTransactions();
+    if(viewId === 'cadastros') renderCrud(currentCrudType);
+    if(viewId === 'agenda') renderAgenda(); 
+    if(viewId === 'fiscal') {
+        renderIrrf();
+        const comp = appData.currentUser.company || {};
+        document.getElementById('link-emissor').href = comp.url_fiscal || DEFAULT_URL_FISCAL;
+        document.getElementById('link-das').href = comp.url_das || DEFAULT_URL_DAS;
     }
-}
-
-// CORREÇÃO: Salvar créditos diretamente no Firebase para o usuário alvo
-async function saveUserCredits() {
-    const userId = document.getElementById('credit-user-id').value;
-    const mode = document.querySelector('input[name="creditType"]:checked').value;
-    
-    // Busca o usuário na lista local (apenas para referência de cálculo)
-    // Se não achar local, teremos que buscar no server, mas vamos assumir que o renderUserList já populou algo ou vamos usar data atual
-    // Para simplificar e ser robusto: buscaremos o doc no firebase primeiro
-    
-    try {
-        if (!navigator.onLine) throw new Error("É necessário estar online para dar créditos.");
-        const db = firebase.firestore();
-        const userRef = db.collection('users').doc(userId);
-        const doc = await userRef.get();
-
-        if (!doc.exists) throw new Error("Usuário não encontrado no banco de dados.");
-
-        const remoteData = doc.data();
-        let userObj = remoteData.currentUser;
-        
-        const now = Date.now();
-        let newLicenseDate = 0;
-
-        if (mode === 'days') {
-            const daysToAdd = parseInt(document.getElementById('credit-days-input').value);
-            if (!daysToAdd || isNaN(daysToAdd)) return alert('Digite um número válido de dias.');
-            
-            // Se a licença já venceu, começa de agora. Se não, soma.
-            if (userObj.licenseExpire < now) {
-                newLicenseDate = now + (daysToAdd * 86400000);
-            } else {
-                newLicenseDate = userObj.licenseExpire + (daysToAdd * 86400000);
-            }
+    if(viewId === 'configuracoes') {
+        loadSettings();
+        if(ADMIN_EMAILS.includes(appData.currentUser.email)) {
+            document.getElementById('admin-panel').classList.remove('hidden');
         } else {
-            const dateInput = document.getElementById('credit-date-input').value;
-            if (!dateInput) return alert('Selecione uma data válida.');
-            newLicenseDate = new Date(dateInput + 'T23:59:59').getTime();
-            if (newLicenseDate < now) return alert('A data selecionada já passou!');
+            document.getElementById('admin-panel').classList.add('hidden');
         }
-
-        // Atualiza o objeto
-        userObj.licenseExpire = newLicenseDate;
-        
-        // Salva de volta no Firebase (atualiza o campo currentUser dentro do documento do usuário)
-        await userRef.update({
-            currentUser: userObj
-        });
-
-        // Se o usuário alterado for o admin logado, atualiza localmente também
-        if (appData.currentUser && appData.currentUser.id === userId) {
-            appData.currentUser.licenseExpire = newLicenseDate;
-            checkLicense();
-        }
-
-        // Atualiza a lista na tela
-        await renderUserList(); 
-        closeModal('modal-credits');
-        alert('Licença atualizada com sucesso no servidor!');
-
-    } catch(err) { 
-        alert("Erro ao salvar créditos: " + err.message); 
     }
+    if(viewId === 'lembretes') renderRemindersList();
+    if(viewId === 'rpa') loadRPAOptions();
 }
 
-// ... (Restante das funções: initReminderSystem, etc... mantidas iguais) ...
-
-function initReminderSystem() {
-    if (checkInterval) clearInterval(checkInterval);
-    checkInterval = setInterval(checkReminders, 30000);
+function loadSettings() {
+    const c = appData.currentUser.company || {};
+    document.getElementById('conf-company-name').value = c.name||''; 
+    document.getElementById('conf-cnpj').value = c.cnpj||''; 
+    document.getElementById('conf-address').value = c.address||''; 
+    document.getElementById('conf-phone').value = c.phone||''; 
+    document.getElementById('conf-whatsapp').value = c.whatsapp||'';
+    document.getElementById('conf-auth-email').value = c.auth_email || ''; 
+    document.getElementById('conf-url-fiscal').value = c.url_fiscal || DEFAULT_URL_FISCAL;
+    document.getElementById('conf-url-das').value = c.url_das || DEFAULT_URL_DAS;
+    document.getElementById('conf-reserve-rate').value = c.reserve_rate || 10;
+    document.getElementById('conf-prolabore-target').value = c.prolabore_target || 4000;
 }
 
-function checkReminders() {
-    if (!appData.currentUser) return;
-    const userData = getUserData();
-    if (!userData) return;
-
-    const reminders = userData.reminders || [];
-    const now = new Date();
-    let changed = false;
-
-    reminders.forEach(r => {
-        const due = new Date(r.dateTime);
-        if (due <= now) {
-            triggerAlert(r); 
-            r.dateTime = calculateNextDate(r.dateTime, r.period); 
-            changed = true;
-        }
-    });
-
-    if (changed) {
-        saveData();
-        if (currentView === 'lembretes') renderRemindersList();
-    }
-}
-
-function triggerAlert(r) {
-    document.getElementById('alert-title').innerText = `🔔 ${r.title}`;
-    document.getElementById('alert-msg').innerText = r.msg;
-    document.getElementById('alert-time').innerText = `Agendado para: ${new Date().toLocaleString()}`;
-    
-    const subject = `Lembrete: ${r.title}`;
-    const body = `Olá,\n\nEste é um lembrete automático:\n\n${r.msg}\n\nData: ${new Date().toLocaleString()}`;
-    const mailtoLink = `mailto:${r.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    document.getElementById('alert-btn-email').href = mailtoLink;
-
-    // Tenta envio automático via Cloud Function
-    sendAutoEmail(r.email, subject, body)
-        .then(() => {
-            console.log("Email automático enviado com sucesso.");
-            document.getElementById('alert-msg').innerText += "\n\n(✅ Email enviado automaticamente)";
-        })
-        .catch(err => console.warn("Envio automático falhou:", err));
-
-    document.getElementById('modal-alert').classList.remove('hidden');
-    try { 
-        const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
-        audio.play().catch(e => console.warn("Áudio bloqueado (interação necessária):", e));
-    } catch(e){}
-}
-
-function calculateNextDate(currentDateStr, period) {
-    const date = new Date(currentDateStr);
-    
-    switch(period) {
-        case 'hourly': date.setHours(date.getHours() + 1); break;
-        case 'daily': date.setDate(date.getDate() + 1); break;
-        case 'weekly': date.setDate(date.getDate() + 7); break;
-        case 'biweekly': date.setDate(date.getDate() + 15); break;
-        case 'monthly': date.setMonth(date.getMonth() + 1); break;
-        case 'yearly': date.setFullYear(date.getFullYear() + 1); break;
-        case 'once': return new Date(8640000000000000).toISOString(); 
-        default: return new Date(8640000000000000).toISOString();
-    }
-    
-    const offset = date.getTimezoneOffset() * 60000;
-    const localISOTime = (new Date(date - offset)).toISOString().slice(0, 16);
-    return localISOTime;
-}
-
-function saveReminder(e) {
+function saveCompanyData(e) {
     e.preventDefault();
     try {
-        const id = document.getElementById('rem-id').value;
-        const title = document.getElementById('rem-title').value;
-        const dateTime = document.getElementById('rem-datetime').value;
-        const email = document.getElementById('rem-email').value;
-        const msg = document.getElementById('rem-msg').value;
-        const period = document.getElementById('rem-period').value;
-        const immediate = document.getElementById('rem-immediate').checked;
+        const companyData = {
+            name: document.getElementById('conf-company-name').value,
+            cnpj: document.getElementById('conf-cnpj').value,
+            address: document.getElementById('conf-address').value,
+            phone: document.getElementById('conf-phone').value,
+            whatsapp: document.getElementById('conf-whatsapp').value,
+            role: document.getElementById('conf-role').value,
+            auth_email: document.getElementById('conf-auth-email').value, 
+            url_fiscal: document.getElementById('conf-url-fiscal').value,
+            url_das: document.getElementById('conf-url-das').value,
+            reserve_rate: parseFloat(document.getElementById('conf-reserve-rate').value),
+            prolabore_target: parseFloat(document.getElementById('conf-prolabore-target').value)
+        };
+        appData.currentUser.company = companyData;
+        
+        const supplierId = 'sup_own_' + appData.currentUser.id;
+        const supplierData = {
+            id: supplierId, name: companyData.name + " (Minha Empresa)",
+            cnpj_cpf: companyData.cnpj, phone: companyData.phone,
+            address: companyData.address, email: appData.currentUser.email,
+            contact_person: appData.currentUser.name, is_own_company: true
+        };
+        const userData = getUserData();
+        if(userData) {
+            const suppliersList = userData.suppliers;
+            const supIndex = suppliersList.findIndex(s => s.id === supplierId);
+            if(supIndex >= 0) suppliersList[supIndex] = supplierData; else suppliersList.push(supplierData);
+            saveData(); 
+            alert('Dados salvos!');
+        }
+    } catch(err) { alert('Erro ao salvar empresa: ' + err.message); }
+}
 
-        if (!title || !dateTime || !email) return alert('Preencha os campos obrigatórios');
+function updateDashboard() {
+    const userData = getUserData();
+    if (!userData) return;
+    const t = userData.transactions; 
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    const reserveRate = appData.currentUser.company.reserve_rate || 10;
+    const prolaboreTarget = appData.currentUser.company.prolabore_target || 4000;
 
-        const reminder = {
-            id: id || 'rem_' + Date.now(),
-            title, dateTime, email, msg, period,
-            emailStatus: 'pending' 
+    let income = 0; let expense = 0; let totalReserve = 0; let totalProlabore = 0;
+    t.forEach(x => {
+        const d = new Date(x.date);
+        if (x.type === 'receita') {
+            if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+                income += x.value;
+                const reserveAmount = x.value * (reserveRate / 100);
+                totalReserve += reserveAmount;
+                const remainder = x.value - reserveAmount;
+                const needed = prolaboreTarget - totalProlabore;
+                if (needed > 0) totalProlabore += (remainder >= needed) ? needed : remainder;
+            }
+        } else {
+            if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) expense += x.value;
+        }
+    });
+
+    document.getElementById('dash-income').innerText = `R$ ${income.toFixed(2)}`;
+    document.getElementById('dash-expense').innerText = `R$ ${expense.toFixed(2)}`;
+    document.getElementById('dash-balance').innerText = `R$ ${(income-expense).toFixed(2)}`;
+    document.getElementById('reserve-percent-display').innerText = reserveRate;
+    document.getElementById('dash-reserve').innerText = `R$ ${totalReserve.toFixed(2)}`;
+    document.getElementById('dash-prolabore').innerText = `R$ ${totalProlabore.toFixed(2)}`;
+    document.getElementById('dash-prolabore-target').innerText = `Meta: R$ ${prolaboreTarget.toFixed(2)}`;
+}
+
+function renderAgenda(filter = '') {
+    const userData = getUserData();
+    if (!userData) return;
+    if(!userData.appointments) userData.appointments = [];
+    let list = userData.appointments.sort((a,b) => new Date(a.date+'T'+a.time) - new Date(b.date+'T'+b.time));
+
+    if (filter === 'today') {
+        const today = new Date().toISOString().split('T')[0];
+        list = list.filter(a => a.date === today);
+    } else if (!filter) {
+        const inputDate = document.getElementById('agenda-filter-date').value;
+        if(inputDate) list = list.filter(a => a.date === inputDate);
+    }
+
+    const container = document.getElementById('agenda-list');
+    container.innerHTML = '';
+    if (list.length === 0) { container.innerHTML = '<p class="text-center p-4" style="grid-column: 1/-1;">Nenhum agendamento encontrado.</p>'; return; }
+
+    const statusMap = {
+        'agendado': { label: 'Agendado', class: 'bg-scheduled', card: 'status-agendado' },
+        'concluido': { label: 'Concluído', class: 'bg-done', card: 'status-concluido' },
+        'cancelado': { label: 'Cancelado', class: 'bg-canceled', card: 'status-cancelado' }
+    };
+
+    list.forEach(a => {
+        const st = statusMap[a.status] || statusMap['agendado'];
+        const formattedDate = a.date.split('-').reverse().join('/');
+        const card = document.createElement('div');
+        card.className = `stat-card agenda-card ${st.card}`;
+        card.innerHTML = `
+            <div class="flex justify-between items-start mb-2">
+                <span class="badge ${st.class}">${st.label}</span>
+                <div class="text-sm font-bold text-light">${formattedDate} - ${a.time}</div>
+            </div>
+            <h3 class="mb-1">${a.title}</h3>
+            <p class="text-sm mb-1"><strong>Cliente:</strong> ${a.client_name}</p>
+            <p class="text-sm mb-2 text-light">${a.service_desc || 'Sem descrição'}</p>
+            <div class="flex justify-between items-center mt-2 border-t pt-2">
+                <div class="text-sm">
+                    <span class="${a.pay_status === 'pago' ? 'text-success font-bold' : 'text-warning'}">
+                        ${a.pay_status === 'pago' ? '💲 Pago' : '⏳ Pendente'}
+                    </span>
+                        - R$ ${parseFloat(a.value).toFixed(2)}
+                </div>
+                <div>
+                    <button class="action-btn btn-warning" onclick="editAppointment('${a.id}')">✏️</button>
+                    <button class="action-btn btn-danger" onclick="deleteAppointment('${a.id}')">🗑️</button>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+function openAppointmentModal(appt = null) {
+    document.getElementById('form-appointment').reset();
+    const clientSelect = document.getElementById('appt-client-select');
+    clientSelect.innerHTML = '<option value="">Selecionar Cliente Cadastrado...</option>';
+    getUserData().clients.forEach(c => { clientSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`; });
+
+    if (appt) {
+        document.getElementById('appt-id').value = appt.id;
+        document.getElementById('appt-title').value = appt.title;
+        document.getElementById('appt-date').value = appt.date;
+        document.getElementById('appt-time').value = appt.time;
+        document.getElementById('appt-client-name').value = appt.client_name;
+        document.getElementById('appt-client-phone').value = appt.client_phone;
+        document.getElementById('appt-desc').value = appt.service_desc;
+        document.getElementById('appt-value').value = appt.value;
+        document.getElementById('appt-status').value = appt.status;
+        document.getElementById('appt-pay-method').value = appt.pay_method;
+        document.getElementById('appt-pay-status').value = appt.pay_status;
+        document.getElementById('appt-obs').value = appt.obs;
+    } else {
+        document.getElementById('appt-id').value = '';
+        document.getElementById('appt-date').valueAsDate = new Date();
+        document.getElementById('appt-status').value = 'agendado';
+    }
+    document.getElementById('modal-appointment').classList.remove('hidden');
+}
+
+function fillAppointmentClient() {
+    const id = document.getElementById('appt-client-select').value;
+    if(id) {
+        const c = getUserData().clients.find(x => x.id === id);
+        if(c) {
+            document.getElementById('appt-client-name').value = c.name;
+            document.getElementById('appt-client-phone').value = c.phone || '';
+        }
+    }
+}
+
+function saveAppointment(e) {
+    e.preventDefault();
+    try {
+        const id = document.getElementById('appt-id').value;
+        const data = {
+            id: id || 'appt_' + Date.now(),
+            title: document.getElementById('appt-title').value,
+            date: document.getElementById('appt-date').value,
+            time: document.getElementById('appt-time').value,
+            client_name: document.getElementById('appt-client-name').value,
+            client_phone: document.getElementById('appt-client-phone').value,
+            service_desc: document.getElementById('appt-desc').value,
+            value: document.getElementById('appt-value').value || 0,
+            status: document.getElementById('appt-status').value,
+            pay_method: document.getElementById('appt-pay-method').value,
+            pay_status: document.getElementById('appt-pay-status').value,
+            obs: document.getElementById('appt-obs').value
+        };
+        const list = getUserData().appointments;
+        if (id) { const idx = list.findIndex(x => x.id === id); if(idx !== -1) list[idx] = data; } else { list.push(data); }
+        saveData(); closeModal('modal-appointment'); renderAgenda();
+    } catch(err) { alert('Erro ao salvar agendamento: ' + err.message); }
+}
+
+function editAppointment(id) { const appt = getUserData().appointments.find(a => a.id === id); if(appt) openAppointmentModal(appt); }
+function deleteAppointment(id) { if(confirm('Excluir este agendamento?')) { const list = getUserData().appointments; const idx = list.findIndex(a => a.id === id); if(idx !== -1) list.splice(idx, 1); saveData(); renderAgenda(); } }
+
+function loadRPAOptions() {
+    const comp = appData.currentUser.company || {};
+    document.getElementById('rpa-comp-name').value = comp.name || '';
+    document.getElementById('rpa-comp-cnpj').value = comp.cnpj || '';
+    document.getElementById('rpa-comp-addr').value = comp.address || '';
+    // Usa nome e email do usuário se não houver um prestador selecionado
+    if(!document.getElementById('rpa-prov-name').value) document.getElementById('rpa-prov-name').value = appData.currentUser.name;
+    if(!document.getElementById('rpa-prov-email').value) document.getElementById('rpa-prov-email').value = comp.auth_email || '';
+
+    const select = document.getElementById('rpa-provider-select');
+    select.innerHTML = '<option value="">Selecione um Autônomo...</option>';
+    getUserData().suppliers.forEach(s => select.innerHTML += `<option value="${s.id}">${s.name}</option>`);
+    document.getElementById('rpa-date').valueAsDate = new Date();
+    document.getElementById('rpa-id').value = '';
+}
+
+function fillRPAProvider() {
+    const id = document.getElementById('rpa-provider-select').value;
+    const s = getUserData().suppliers.find(item => item.id === id);
+    if (s) {
+        document.getElementById('rpa-prov-name').value = s.name;
+        document.getElementById('rpa-prov-cpf').value = s.cnpj_cpf || '';
+        document.getElementById('rpa-prov-phone').value = s.phone || '';
+        document.getElementById('rpa-prov-addr').value = s.address || '';
+        document.getElementById('rpa-prov-email').value = s.email || '';
+    }
+}
+
+function calculateRPA() {
+    const value = parseFloat(document.getElementById('rpa-value').value) || 0;
+    const issRate = parseFloat(document.getElementById('rpa-iss-rate').value) || 0;
+    const inss = value * 0.11;
+    document.getElementById('rpa-inss').value = `R$ ${inss.toFixed(2)}`;
+    const iss = value * (issRate / 100);
+    document.getElementById('rpa-iss-val').value = `R$ ${iss.toFixed(2)}`;
+    
+    const irrfBase = value - inss;
+    let irrf = 0;
+    const table = appData.irrfTable.sort((a,b) => a.max - b.max);
+    for(let row of table) {
+        if (irrfBase <= row.max) { irrf = (irrfBase * (row.rate / 100)) - row.deduction; break; }
+    }
+    if (irrf < 0) irrf = 0;
+    document.getElementById('rpa-irrf').value = `R$ ${irrf.toFixed(2)}`;
+    document.getElementById('rpa-net').value = `R$ ${(value - inss - iss - irrf).toFixed(2)}`;
+}
+
+function saveRPA() {
+    try {
+        const id = document.getElementById('rpa-id').value;
+        const rpa = {
+            id: id || 'rpa_' + Date.now(),
+            date: document.getElementById('rpa-date').value,
+            provider: document.getElementById('rpa-prov-name').value,
+            desc: document.getElementById('rpa-desc').value,
+            value: document.getElementById('rpa-value').value,
+            net: document.getElementById('rpa-net').value,
+            fullData: {
+                provName: document.getElementById('rpa-prov-name').value, provCpf: document.getElementById('rpa-prov-cpf').value,
+                provPhone: document.getElementById('rpa-prov-phone').value, provAddr: document.getElementById('rpa-prov-addr').value,
+                provEmail: document.getElementById('rpa-prov-email').value,
+                inss: document.getElementById('rpa-inss').value, iss: document.getElementById('rpa-iss-val').value, irrf: document.getElementById('rpa-irrf').value
+            }
+        };
+        const list = getUserData().rpas || (getUserData().rpas = []);
+        if(id) { const idx = list.findIndex(r => r.id === id); if(idx !== -1) list[idx] = rpa; else list.push(rpa); } else { list.push(rpa); }
+        saveData(); alert('RPA Salvo!'); toggleRPAHistory();
+    } catch(err) { alert('Erro ao salvar RPA: ' + err.message); }
+}
+
+function sendRPAEmail() {
+    const email = document.getElementById('rpa-prov-email').value;
+    if(!email) return alert('Por favor, preencha o e-mail do autônomo.');
+    
+    const compName = document.getElementById('rpa-comp-name').value || "Empresa";
+    const desc = document.getElementById('rpa-desc').value;
+    const val = document.getElementById('rpa-net').value;
+    const date = document.getElementById('rpa-date').value.split('-').reverse().join('/');
+    const subject = `Recibo RPA - ${compName}`;
+    const body = `Olá,\n\nSegue em anexo o RPA emitido.\n\nServiço: ${desc}\nData: ${date}\nValor Líquido: ${val}\n\nAtt,\n${compName}`;
+
+    // --- GERAÇÃO DO ANEXO ---
+    const htmlContent = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>RPA</title></head><body><h2 style="text-align:center">RPA - ${compName}</h2><br><h3>1. Contratante</h3><p>Razão: ${compName}</p><p>CNPJ: ${document.getElementById('rpa-comp-cnpj').value}</p><hr><h3>2. Autônomo</h3><p>Nome: ${document.getElementById('rpa-prov-name').value}</p><p>CPF: ${document.getElementById('rpa-prov-cpf').value}</p><hr><h3>3. Serviço</h3><p>${document.getElementById('rpa-desc').value}</p><p>Data: ${document.getElementById('rpa-date').value}</p><hr><h3>4. Valores</h3><p>Bruto: R$ ${document.getElementById('rpa-value').value}</p><p>Líquido: ${document.getElementById('rpa-net').value}</p></body></html>`;
+    
+    const base64Attachment = btoa(unescape(encodeURIComponent(htmlContent)));
+    const fileName = `RPA_${compName.replace(/[^a-zA-Z0-9]/g, '_')}.doc`;
+
+    sendAutoEmail(email, subject, body, base64Attachment, fileName)
+        .then(() => alert("E-mail do RPA enviado automaticamente com sucesso (Anexo incluído)!"))
+        .catch((err) => {
+            console.warn("Falha no envio automático, abrindo cliente de email.", err);
+            window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        });
+}
+
+function toggleRPAHistory() {
+    const container = document.getElementById('rpa-history-container');
+    container.classList.toggle('hidden');
+    if(!container.classList.contains('hidden')) {
+        const tbody = document.querySelector('#rpa-history-table tbody');
+        tbody.innerHTML = '';
+        const list = getUserData().rpas || [];
+        list.sort((a,b) => new Date(b.date) - new Date(a.date));
+        list.forEach(r => {
+            tbody.innerHTML += `<tr><td>${r.date}</td><td>${r.provider}</td><td>${r.net}</td><td><button class="action-btn btn-warning" onclick="loadRPA('${r.id}')">✏️</button><button class="action-btn btn-danger" onclick="deleteRPA('${r.id}')">🗑️</button></td></tr>`;
+        });
+    }
+}
+
+function loadRPA(id) {
+    const r = getUserData().rpas.find(x => x.id === id);
+    if(r) {
+        document.getElementById('rpa-id').value = r.id; document.getElementById('rpa-date').value = r.date;
+        document.getElementById('rpa-desc').value = r.desc; document.getElementById('rpa-value').value = r.value;
+        document.getElementById('rpa-prov-name').value = r.fullData.provName; document.getElementById('rpa-prov-cpf').value = r.fullData.provCpf;
+        document.getElementById('rpa-prov-phone').value = r.fullData.provPhone; document.getElementById('rpa-prov-addr').value = r.fullData.provAddr;
+        document.getElementById('rpa-prov-email').value = r.fullData.provEmail || '';
+        calculateRPA(); alert('RPA Carregado.'); window.scrollTo(0,0);
+    }
+}
+
+function deleteRPA(id) { if(confirm('Excluir este RPA?')) { const l = getUserData().rpas; l.splice(l.findIndex(r => r.id === id), 1); saveData(); toggleRPAHistory(); } }
+
+function exportRPAPdf() { 
+    const originalTitle = document.title;
+    const compName = document.getElementById('rpa-comp-name').value || "Empresa";
+    const cleanName = compName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+    document.title = `RPA_${cleanName}`;
+    document.querySelectorAll('section').forEach(s => s.classList.remove('active-print')); 
+    document.getElementById('view-rpa').classList.add('active-print'); 
+    window.print();
+    setTimeout(() => { document.title = originalTitle; }, 1000);
+}
+
+function exportRPADoc() { 
+    const compName = document.getElementById('rpa-comp-name').value || "Empresa";
+    const cleanName = compName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+    const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>RPA</title></head><body><h2 style="text-align:center">RPA - ${compName}</h2><br><h3>1. Contratante</h3><p>Razão: ${compName}</p><p>CNPJ: ${document.getElementById('rpa-comp-cnpj').value}</p><hr><h3>2. Autônomo</h3><p>Nome: ${document.getElementById('rpa-prov-name').value}</p><p>CPF: ${document.getElementById('rpa-prov-cpf').value}</p><hr><h3>3. Serviço</h3><p>${document.getElementById('rpa-desc').value}</p><p>Data: ${document.getElementById('rpa-date').value}</p><hr><h3>4. Valores</h3><p>Bruto: R$ ${document.getElementById('rpa-value').value}</p><p>Líquido: ${document.getElementById('rpa-net').value}</p></body></html>`; 
+    const blob = new Blob([html], { type: 'application/msword' }); 
+    const url = URL.createObjectURL(blob); 
+    const a = document.createElement('a'); 
+    a.href = url; 
+    a.download = `RPA_${cleanName}.doc`; 
+    a.click(); 
+}
+
+function exportReportPDF() { document.getElementById('report-company-header').innerText = appData.currentUser.company.name || "Minha Empresa"; document.querySelectorAll('section').forEach(s => s.classList.remove('active-print')); document.getElementById('view-listagens').classList.add('active-print'); window.print(); }
+function exportReportDoc() { const header = `<h2>${appData.currentUser.company.name || "Minha Empresa"}</h2>`; const table = document.getElementById('listing-table').outerHTML; const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>Relatório</title></head><body>${header}<h3>Relatório do Sistema</h3>${table}</body></html>`; const blob = new Blob([html], { type: 'application/msword' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `Relatorio.doc`; a.click(); }
+
+function renderCrud(type) { 
+    currentCrudType = type; 
+    document.getElementById('crud-title').innerText = type.toUpperCase(); 
+    document.querySelectorAll('.crud-btn').forEach(btn => { btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${type}'`)); });
+    const userData = getUserData();
+    if (!userData) return;
+    const list = userData[type]; 
+    const table = document.getElementById('crud-table'); 
+    let h = type.match(/products|services/) ? '<th>Nome</th><th>Desc</th><th>Preço</th>' : '<th>Nome</th><th>Contato</th><th>Info</th>'; 
+    table.innerHTML = `<thead><tr>${h}<th>Ações</th></tr></thead><tbody>` + list.map(i => `<tr><td>${i.name}</td><td>${i.description || i.contact_person || '-'}</td><td>${i.price ? 'R$ '+i.price : i.phone}</td><td><button class="action-btn btn-warning" onclick="editCrudItem('${i.id}')">✏️</button> <button class="action-btn btn-danger" onclick="deleteCrudItem('${type}','${i.id}')">🗑️</button></td></tr>`).join('') + `</tbody>`; 
+}
+
+function openCrudModal(isEdit = false, itemData = null) { document.getElementById('modal-crud').classList.remove('hidden'); document.getElementById('crud-id').value = itemData ? itemData.id : ''; const fields = document.getElementById('crud-fields'); if(currentCrudType.match(/products|services/)) { fields.innerHTML = `<label>Nome</label><input name="name" value="${itemData?.name||''}" required><label>Preço</label><input type="number" step="0.01" name="price" value="${itemData?.price||''}" required><label>Descrição</label><textarea name="description" rows="3">${itemData?.description||''}</textarea>`; } else { fields.innerHTML = `<label>Nome/Razão</label><input name="name" value="${itemData?.name||''}" required><label>Contato</label><input name="contact_person" value="${itemData?.contact_person||''}"><label>CPF/CNPJ</label><input name="cnpj_cpf" value="${itemData?.cnpj_cpf||''}"><label>Endereço</label><input name="address" value="${itemData?.address||''}"><label>Telefone</label><input name="phone" value="${itemData?.phone||''}"><label>Email</label><input name="email" value="${itemData?.email||''}">`; } }
+function editCrudItem(id) { const item = getUserData()[currentCrudType].find(i => i.id === id); if (item) openCrudModal(true, item); }
+
+function saveCrudItem(e) {
+    e.preventDefault();
+    try {
+        const id = document.getElementById('crud-id').value;
+        const els = e.target.elements;
+        
+        const item = {
+            id: id || 'i_'+Date.now(),
+            name: els['name'] ? els['name'].value : '',
+            price: els['price'] ? els['price'].value : undefined,
+            description: els['description'] ? els['description'].value : undefined,
+            contact_person: els['contact_person'] ? els['contact_person'].value : undefined,
+            phone: els['phone'] ? els['phone'].value : undefined,
+            address: els['address'] ? els['address'].value : undefined,
+            cnpj_cpf: els['cnpj_cpf'] ? els['cnpj_cpf'].value : undefined,
+            email: els['email'] ? els['email'].value : undefined
         };
         
         const userData = getUserData();
-        if (!userData.reminders) userData.reminders = [];
-        const list = userData.reminders;
-
-        if (id) {
-            const idx = list.findIndex(r => r.id === id);
-            if (idx !== -1) list[idx] = reminder;
-        } else {
-            list.push(reminder);
-        }
-
+        if(!userData) throw new Error("Usuário não carregado");
+        
+        const list = userData[currentCrudType];
+        const idx = list.findIndex(i => i.id === id);
+        if(idx !== -1) list[idx] = item; else list.push(item);
+        
         saveData();
-
-        if (immediate) {
-            const subject = `Lembrete: ${title}`;
-            const body = `Olá,\n\nEste é um lembrete configurado:\n\n${msg}\n\nData: ${new Date(dateTime).toLocaleString()}\nPeriodicidade: ${period}`;
-            
-            // Envia via Cloud Function
-            sendAutoEmail(email, subject, body)
-                .then(() => alert('Lembrete Salvo e Email enviado com sucesso!'))
-                .catch((err) => {
-                    console.warn("Falha no envio auto, abrindo mailto.", err);
-                    window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                });
-        } else {
-            alert('Lembrete Salvo!');
-        }
-        
-        cancelReminderEdit(); 
-        renderRemindersList();
-    } catch(err) { alert("Erro ao salvar lembrete: " + err.message); }
-}
-
-function editReminder(index) {
-    const userData = getUserData();
-    const r = userData.reminders[index];
-    if (r) {
-        document.getElementById('rem-id').value = r.id;
-        document.getElementById('rem-title').value = r.title;
-
-        const rDate = new Date(r.dateTime);
-        // FIX: Se o ano for muito distante (ex: > 9999), usa a data atual
-        if (isNaN(rDate.getTime()) || rDate.getFullYear() > 2100) {
-            const now = new Date();
-            const offset = now.getTimezoneOffset() * 60000;
-            document.getElementById('rem-datetime').value = (new Date(now - offset)).toISOString().slice(0, 16);
-        } else {
-            document.getElementById('rem-datetime').value = r.dateTime.substring(0, 16);
-        }
-
-        document.getElementById('rem-email').value = r.email;
-        document.getElementById('rem-msg').value = r.msg;
-        document.getElementById('rem-period').value = r.period;
-        
-        document.getElementById('rem-form-title').innerText = "✏️ Editando Lembrete";
-        document.getElementById('rem-btn-save').innerText = "Atualizar Lembrete";
-        document.getElementById('rem-btn-cancel').classList.remove('hidden');
-        document.getElementById('rem-title').focus();
+        closeModal('modal-crud');
+        renderCrud(currentCrudType);
+    } catch(err) {
+        alert("Erro ao salvar item: " + err.message);
     }
 }
 
-function cancelReminderEdit() {
-    document.getElementById('rem-id').value = "";
-    document.getElementById('rem-title').value = "";
-    document.getElementById('rem-datetime').value = "";
-    document.getElementById('rem-email').value = "";
-    document.getElementById('rem-msg').value = "";
-    document.getElementById('rem-period').value = "once";
-    document.getElementById('rem-immediate').checked = false;
+function deleteCrudItem(t,id){ if(confirm('Apagar?')){const l=getUserData()[t]; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderCrud(t);} }
+function getUserData() { 
+    if (!appData.currentUser) return null;
+    return appData.records[appData.currentUser.id]; 
+}
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+function checkLicense() { const d = Math.ceil((appData.currentUser.licenseExpire - Date.now())/86400000); document.getElementById('license-days-display').innerText = d>0?d+' dias':'Expirado'; document.getElementById('license-warning').classList.toggle('hidden', d>0); }
 
-    document.getElementById('rem-form-title').innerText = "🔔 Novo Lembrete";
-    document.getElementById('rem-btn-save').innerText = "Salvar Lembrete Automático";
-    document.getElementById('rem-btn-cancel').classList.add('hidden');
+function filterFinance(filter) {
+    currentFinanceFilter = filter;
+    document.querySelectorAll('.fin-filter-btn').forEach(btn => { btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${filter}'`)); });
+    renderTransactions();
 }
 
-function renderRemindersList() {
+function renderTransactions(){ 
     const userData = getUserData();
-    if(!userData) return;
-    const list = userData.reminders || [];
-    const tbody = document.getElementById('reminders-tbody');
-    tbody.innerHTML = '';
-
-    const activeList = list.filter(r => new Date(r.dateTime).getFullYear() < 3000);
-
-    if (activeList.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center">Nenhum lembrete ativo.</td></tr>';
-        return;
-    }
-
-    activeList.forEach((r, index) => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td>${r.title}</td>
-            <td>${new Date(r.dateTime).toLocaleString()}</td>
-            <td>${translatePeriod(r.period)}</td>
-            <td>
-                <button class="action-btn btn-warning" onclick="editReminder(${index})">✏️</button>
-                <button class="action-btn btn-danger" onclick="deleteReminder(${index})">🗑️</button>
-            </td>
-        `;
-        tbody.appendChild(row);
-    });
+    if (!userData) return;
+    let l = userData.transactions.sort((a,b)=>new Date(b.date)-new Date(a.date)); 
+    if (currentFinanceFilter !== 'all') { l = l.filter(t => t.type === currentFinanceFilter); }
+    document.querySelector('#finance-table tbody').innerHTML = l.length > 0 ? 
+        l.map(t=>`<tr><td>${t.date}</td><td>${t.type}</td><td>${t.category}</td><td>${t.obs||'-'}</td><td>R$ ${t.value}</td><td><button onclick="editTransaction('${t.id}')">✏️</button><button onclick="deleteTransaction('${t.id}')">🗑️</button></td></tr>`).join('') :
+        '<tr><td colspan="6" class="text-center p-4">Nenhuma movimentação encontrada.</td></tr>';
 }
 
-function translatePeriod(p) {
-    const map = {
-        'once': 'Uma vez', 'hourly': 'Horário', 'daily': 'Diário', 
-        'weekly': 'Semanal', 'biweekly': 'Quinzenal', 'monthly': 'Mensal', 'yearly': 'Anual'
-    };
-    return map[p] || p;
+function editTransaction(id){ 
+    const t=getUserData().transactions.find(x=>x.id===id); 
+    document.getElementById('trans-id').value=t.id; 
+    document.getElementById('trans-type').value=t.type; 
+    updateTransactionDependencies(); 
+    document.getElementById('trans-category').value=t.category; 
+    document.getElementById('trans-entity').value=t.entity;
+    document.getElementById('trans-value').value=t.value; 
+    document.getElementById('trans-date').value=t.date; 
+    document.getElementById('trans-obs').value=t.obs; 
+    document.getElementById('modal-transaction').classList.remove('hidden'); 
 }
 
-function deleteReminder(index) {
-    if (confirm('Excluir lembrete?')) {
+function saveTransaction(e){ 
+    e.preventDefault(); 
+    try {
+        const id=document.getElementById('trans-id').value; 
+        const t={
+            id:id||'t_'+Date.now(), 
+            type:document.getElementById('trans-type').value, 
+            category:document.getElementById('trans-category').value, 
+            value:parseFloat(document.getElementById('trans-value').value), 
+            date:document.getElementById('trans-date').value, 
+            obs:document.getElementById('trans-obs').value, 
+            entity:document.getElementById('trans-entity').value
+        }; 
         const userData = getUserData();
-        userData.reminders.splice(index, 1);
-        saveData();
-        renderRemindersList();
+        const l=userData.transactions; 
+        const i=l.findIndex(x=>x.id===t.id); 
+        i!==-1?l[i]=t:l.push(t); 
+        saveData(); closeModal('modal-transaction'); renderTransactions(); 
+    } catch(err) { alert("Erro ao salvar transação: " + err.message); }
+}
+
+function deleteTransaction(id){ if(confirm('Apagar?')){const l=getUserData().transactions; l.splice(l.findIndex(x=>x.id===id),1); saveData(); renderTransactions();} }
+
+function updateTransactionDependencies(){
+    const type = document.getElementById('trans-type').value;
+    const cats = type==='receita'?['Venda','Serviço','Outros']:['Compra','Despesa','Imposto', 'Gastos Pessoais']; 
+    document.getElementById('trans-category').innerHTML=cats.map(c=>`<option>${c}</option>`).join('');
+    const select = document.getElementById('trans-entity');
+    const userData = getUserData();
+    if (!userData) return;
+    const list = type === 'receita' ? userData.clients : userData.suppliers;
+    if (list && list.length > 0) { select.innerHTML = '<option value="">Selecione...</option>' + list.map(i => `<option value="${i.name}">${i.name}</option>`).join(''); } 
+    else { select.innerHTML = '<option value="">Sem cadastros disponíveis</option>'; }
+}
+
+function openTransactionModal(){ document.getElementById('form-transaction').reset(); document.getElementById('trans-id').value=''; document.getElementById('modal-transaction').classList.remove('hidden'); updateTransactionDependencies(); }
+
+function switchListing(t){ 
+    currentListingType=t; 
+    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); if(b.getAttribute('onclick').includes(`'${t}'`)) b.classList.add('active'); });
+    document.getElementById('movements-filter').classList.toggle('hidden', t !== 'movimentacoes');
+    renderListingTable();
+}
+
+function renderListingTable() {
+    const t = currentListingType;
+    const userData = getUserData();
+    if (!userData) return;
+    let data = t === 'movimentacoes' ? userData.transactions : userData[t];
+    
+    if (t === 'movimentacoes') {
+        const monthFilter = document.getElementById('listing-month-filter').value; 
+        if (monthFilter) {
+            data = data.filter(i => i.date.startsWith(monthFilter));
+        }
+        data.sort((a,b) => new Date(b.date) - new Date(a.date));
     }
+
+    document.getElementById('listing-thead').innerHTML = t === 'movimentacoes' 
+        ? '<tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr>' 
+        : '<tr><th>Nome</th><th>Detalhe</th><th>Valor/Tel</th></tr>'; 
+    
+    document.getElementById('listing-tbody').innerHTML = data.map(i => {
+        if (t === 'movimentacoes') {
+            const colorClass = i.type === 'receita' ? 'text-success' : 'text-danger';
+            return `<tr><td>${i.date}</td><td>${i.type}</td><td>${i.obs || i.category}</td><td class="${colorClass}">${i.value}</td></tr>`;
+        } else {
+            return `<tr><td>${i.name}</td><td>${i.description||i.contact_person||'-'}</td><td>${i.price||i.phone||'-'}</td></tr>`;
+        }
+    }).join('');
+}
+
+function loadFiscalReminders(){ document.getElementById('fiscal-reminders').innerHTML='<li>DAS Dia 20</li>'; }
+function downloadBackup(){ saveData(); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(appData)],{type:'json'})); a.download='backup.json'; a.click(); }
+function restoreBackup(i){ const r=new FileReader(); r.onload=e=>{appData=JSON.parse(e.target.result);saveData();location.reload();}; r.readAsText(i.files[0]); }
+
+function renderIrrf(){ document.getElementById('irrf-table-body').innerHTML=appData.irrfTable.map(r=>`<tr><td>${r.max}</td><td>${r.rate}</td><td>${r.deduction}</td><td><button class="action-btn btn-warning" onclick="editIrrfRow('${r.id}')">✏️</button><button class="action-btn btn-danger" onclick="deleteIrrfRow('${r.id}')">X</button></td></tr>`).join(''); }
+function deleteIrrfRow(id){ appData.irrfTable.splice(appData.irrfTable.findIndex(r=>r.id===id),1); saveData(); renderIrrf(); }
+function openIrrfModal(){ document.getElementById('form-irrf').reset(); document.getElementById('irrf-id').value = ''; document.getElementById('modal-irrf').classList.remove('hidden'); }
+function editIrrfRow(id) {
+    const row = appData.irrfTable.find(r => r.id === id);
+    if(row) {
+        document.getElementById('irrf-id').value = row.id; document.getElementById('irrf-max').value = row.max;
+        document.getElementById('irrf-rate').value = row.rate; document.getElementById('irrf-deduction').value = row.deduction;
+        document.getElementById('modal-irrf').classList.remove('hidden');
+    }
+}
+function saveIrrfRow(e){ 
+    e.preventDefault(); 
+    try {
+        const id = document.getElementById('irrf-id').value;
+        const data = { id: id || 'irrf_'+Date.now(), max:parseFloat(e.target[1].value), rate:parseFloat(e.target[2].value), deduction:parseFloat(e.target[3].value) };
+        if (id) { const idx = appData.irrfTable.findIndex(r => r.id === id); if (idx !== -1) appData.irrfTable[idx] = data; } else { appData.irrfTable.push(data); }
+        saveData(); closeModal('modal-irrf'); renderIrrf(); 
+    } catch(err) { alert(err.message); }
 }
 
 init();
