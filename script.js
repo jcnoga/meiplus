@@ -360,7 +360,7 @@ function createSeedData() {
     };
 }
 
-// CORREÇÃO: Cadastro agora é async e força a conexão com Firebase Auth se online
+// CORREÇÃO: Cadastro agora é async, cria usuário no Firebase Auth e salva na nuvem/local
 document.getElementById('register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = document.getElementById('reg-email').value;
@@ -373,27 +373,13 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
     try {
         // 1. Criação no Firebase Auth (Painel de Autenticação)
         let firebaseUid = null;
-        
-        // CORREÇÃO: Verificações explícitas de conectividade e carregamento do SDK
-        const isOnline = navigator.onLine;
-        const firebaseLoaded = typeof firebase !== 'undefined';
-        
-        if (isOnline && firebaseLoaded) {
-            // Garante que o Firebase está inicializado antes de tentar criar o usuário
-            // Isso previne falhas se a inicialização no topo do script não ocorreu por algum motivo
-            if (!firebase.apps.length) {
-                console.log("Reinicializando Firebase para cadastro...");
-                firebase.initializeApp(firebaseConfig);
-            }
-
+        if (typeof firebase !== 'undefined' && navigator.onLine) {
             const userCredential = await firebase.auth().createUserWithEmailAndPassword(email, password);
             const user = userCredential.user;
             await user.updateProfile({ displayName: name });
             firebaseUid = user.uid;
         } else {
-            // Fallback para ID manual apenas se offline ou se o SDK não carregou
-            // Isso evita a criação de contas "fantasmas" locais quando deveria ser nuvem
-            if (isOnline) console.warn("Modo Online detectado mas Firebase indisponível. Criando localmente.");
+            // Fallback para ID manual se offline (embora registro offline não autentique no Firebase)
             firebaseUid = Date.now().toString(); 
         }
 
@@ -416,9 +402,6 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
 
         // Persistência Explícita no Firestore (Banco de Dados)
         if (typeof firebase !== 'undefined' && navigator.onLine) {
-            // Garante inicialização para o Firestore também
-            if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-            
             const db = firebase.firestore();
             const userDataToSave = JSON.parse(JSON.stringify(appData));
             await db.collection('users').doc(newUser.id).set(userDataToSave);
