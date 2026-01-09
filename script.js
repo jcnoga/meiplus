@@ -4,7 +4,6 @@ const DB_KEY = 'MEI_SYSTEM_V12_8';
 const ADMIN_EMAILS = ['jcnvap@gmail.com', 'jcnval@gmail.com']; 
 
 // --- CONFIGURAÇÃO DE EMAIL VIA CLOUD FUNCTION (BACKEND FIREBASE) ---
-// URL obtida da sua imagem do console do Google Cloud
 const CLOUD_FUNCTION_URL = "https://testemanualemail-cg2cq35buq-uc.a.run.app";
 
 const LIC_PAD_VAL = 13;
@@ -149,21 +148,19 @@ let currentFinanceFilter = 'all';
 let currentView = 'dashboard';
 
 // --- FUNÇÃO AUXILIAR DE ENVIO AUTOMÁTICO (CLOUD FUNCTIONS) ---
-// Substituindo EmailJS pela chamada direta à função da sua imagem
 async function sendAutoEmail(to_email, subject, message, attachment_data = null, attachment_name = null) {
     if (!navigator.onLine) {
         return Promise.reject("Sem conexão com a internet.");
     }
 
     try {
-        // Prepara os dados para enviar para sua Cloud Function
         const payload = {
-            to: to_email,          // Backend espera 'to' ou 'email'
-            email: to_email,       // Enviando ambos para garantir compatibilidade
+            to: to_email,          
+            email: to_email,       
             subject: subject,
-            text: message,         // Texto simples
-            html: message.replace(/\n/g, '<br>'), // Versão HTML básica
-            attachment: attachment_data, // Base64 do arquivo
+            text: message,         
+            html: message.replace(/\n/g, '<br>'), 
+            attachment: attachment_data, 
             filename: attachment_name
         };
 
@@ -179,12 +176,11 @@ async function sendAutoEmail(to_email, subject, message, attachment_data = null,
             throw new Error(`Erro no servidor: ${response.status} ${response.statusText}`);
         }
 
-        // Se a função retornar sucesso
         return true;
 
     } catch (error) {
         console.warn("Falha ao chamar Cloud Function:", error);
-        throw error; // Repassa o erro para acionar o fallback (mailto)
+        throw error; 
     }
 }
 
@@ -197,7 +193,6 @@ async function init() {
         
         const sessionUser = sessionStorage.getItem('mei_user_id');
         
-        // Garantia de que a tela de carregamento vai sair
         setTimeout(() => {
             if (sessionUser) {
                 const user = appData.users.find(u => u.id === sessionUser);
@@ -214,7 +209,6 @@ async function init() {
         }, 500);
     } catch(err) {
         console.error("Erro crítico na inicialização:", err);
-        // Em caso de erro fatal, forçar a tela de login
         document.getElementById('loading-overlay').style.display = 'none';
         document.getElementById('auth-screen').classList.remove('hidden');
     }
@@ -704,20 +698,16 @@ function sendRPAEmail() {
     const subject = `Recibo RPA - ${compName}`;
     const body = `Olá,\n\nSegue em anexo o RPA emitido.\n\nServiço: ${desc}\nData: ${date}\nValor Líquido: ${val}\n\nAtt,\n${compName}`;
 
-    // --- GERAÇÃO DO ANEXO (Utilizando funcionalidade existente exportRPADoc) ---
-    // Reutilizamos a estrutura HTML que o sistema já gera para criar o documento
+    // --- GERAÇÃO DO ANEXO ---
     const htmlContent = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>RPA</title></head><body><h2 style="text-align:center">RPA - ${compName}</h2><br><h3>1. Contratante</h3><p>Razão: ${compName}</p><p>CNPJ: ${document.getElementById('rpa-comp-cnpj').value}</p><hr><h3>2. Autônomo</h3><p>Nome: ${document.getElementById('rpa-prov-name').value}</p><p>CPF: ${document.getElementById('rpa-prov-cpf').value}</p><hr><h3>3. Serviço</h3><p>${document.getElementById('rpa-desc').value}</p><p>Data: ${document.getElementById('rpa-date').value}</p><hr><h3>4. Valores</h3><p>Bruto: R$ ${document.getElementById('rpa-value').value}</p><p>Líquido: ${document.getElementById('rpa-net').value}</p></body></html>`;
     
-    // Converte para Base64 para enviar como anexo via Cloud Function
     const base64Attachment = btoa(unescape(encodeURIComponent(htmlContent)));
     const fileName = `RPA_${compName.replace(/[^a-zA-Z0-9]/g, '_')}.doc`;
 
-    // Tenta envio automático com anexo via Cloud Function
     sendAutoEmail(email, subject, body, base64Attachment, fileName)
         .then(() => alert("E-mail do RPA enviado automaticamente com sucesso (Anexo incluído)!"))
         .catch((err) => {
             console.warn("Falha no envio automático, abrindo cliente de email.", err);
-            // Fallback: Mailto não suporta anexo direto via JS browser, abre apenas o corpo
             window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         });
 }
@@ -1122,7 +1112,10 @@ function triggerAlert(r) {
         .catch(err => console.warn("Envio automático falhou:", err));
 
     document.getElementById('modal-alert').classList.remove('hidden');
-    try { new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg').play(); } catch(e){}
+    try { 
+        const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+        audio.play().catch(e => console.warn("Áudio bloqueado (interação necessária):", e));
+    } catch(e){}
 }
 
 function calculateNextDate(currentDateStr, period) {
@@ -1202,7 +1195,17 @@ function editReminder(index) {
     if (r) {
         document.getElementById('rem-id').value = r.id;
         document.getElementById('rem-title').value = r.title;
-        document.getElementById('rem-datetime').value = r.dateTime;
+
+        const rDate = new Date(r.dateTime);
+        // FIX: Se o ano for muito distante (ex: > 9999), usa a data atual
+        if (isNaN(rDate.getTime()) || rDate.getFullYear() > 2100) {
+            const now = new Date();
+            const offset = now.getTimezoneOffset() * 60000;
+            document.getElementById('rem-datetime').value = (new Date(now - offset)).toISOString().slice(0, 16);
+        } else {
+            document.getElementById('rem-datetime').value = r.dateTime.substring(0, 16);
+        }
+
         document.getElementById('rem-email').value = r.email;
         document.getElementById('rem-msg').value = r.msg;
         document.getElementById('rem-period').value = r.period;
