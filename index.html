@@ -1,26 +1,20 @@
 <!DOCTYPE html>
-<!-- 
-    GESTOR MEI - VERSÃO V12.7 (HÍBRIDO + SYNC MANUAL)
-    
-    INTEGRAÇÃO TOTAL:
-    - HTML Estruturado
-    - CSS Externo (style.css)
-    - JS Externo (script.js)
-    - Módulos: Dashboard, Agenda, Lembretes, Cadastros, Financeiro, RPA, Fiscal, Relatórios, Config.
--->
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor MEI - Sistema Completo V12.7</title>
+    <title>Gestor MEI - Sistema Completo V12.9</title>
     
     <!-- FIREBASE SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
-    <!-- Folha de Estilos Externa com Cache Busting -->
-    <link rel="stylesheet" href="style.css?v=12.7">
+    <!-- EMAILJS SDK (IMPORTANTE: Necessário para envio de anexos) -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+
+    <!-- Folha de Estilos -->
+    <link rel="stylesheet" href="style.css?v=12.9">
 </head>
 <body>
 
@@ -127,14 +121,13 @@
                 <div id="agenda-list" class="dash-grid"></div>
             </section>
 
-            <!-- VIEW: LEMBRETES (NOVA ABA) -->
+            <!-- VIEW: LEMBRETES -->
             <section id="view-lembretes" class="hidden">
                 <div class="view-header"><h1>Gerenciamento de Lembretes</h1></div>
                 
                 <div class="stat-card mb-4">
                     <h3 id="rem-form-title">🔔 Novo Lembrete</h3>
                     <form onsubmit="saveReminder(event)">
-                        <!-- CAMPO HIDDEN PARA ID (EDIÇÃO) -->
                         <input type="hidden" id="rem-id">
                         
                         <label>Título do Lembrete</label>
@@ -167,7 +160,7 @@
 
                         <div class="flex gap-2 items-center mt-2 mb-2">
                             <input type="checkbox" id="rem-immediate" style="width:auto; margin-bottom:0;">
-                            <label for="rem-immediate" style="margin-top:0; margin-bottom:0;">Enviar imediatamente (abrir email)</label>
+                            <label for="rem-immediate" style="margin-top:0; margin-bottom:0;">Enviar imediatamente</label>
                         </div>
 
                         <div class="flex gap-2 mt-2">
@@ -179,7 +172,7 @@
 
                 <div class="stat-card">
                     <h4>Lembretes Configurados</h4>
-                    <p class="text-sm text-light mb-2">Envios automáticos gerenciados pelo servidor.</p>
+                    <p class="text-sm text-light mb-2">Envios automáticos gerenciados pelo sistema.</p>
                     <div class="table-container mt-2">
                         <table id="reminders-table">
                             <thead><tr><th>Título</th><th>Próximo Disparo</th><th>Repetição</th><th>Ações</th></tr></thead>
@@ -257,7 +250,7 @@
                                 <button class="btn-primary w-full" onclick="exportRPAPdf()">🖨️ PDF</button>
                                 <button class="btn-info w-full" onclick="exportRPADoc()">📄 Word</button>
                             </div>
-                            <button class="btn-outline w-full" onclick="sendRPAEmail()">📧 Enviar por E-mail</button>
+                            <button class="btn-outline w-full" onclick="sendRPAEmail()">📧 Enviar por E-mail (com Anexo)</button>
                         </div>
                     </div>
                     <div id="rpa-history-container" class="hidden mt-4 border-t pt-4">
@@ -367,7 +360,6 @@
                         </div>
                         <label>Endereço Completo</label><input type="text" id="conf-address">
                         <label>WhatsApp</label><input type="text" id="conf-whatsapp">
-                        <!-- Novo campo de email -->
                         <label>E-mail do Autônomo</label><input type="email" id="conf-auth-email" placeholder="email@exemplo.com">
                         
                         <label>Atuação</label>
@@ -551,13 +543,13 @@
             <p id="alert-msg" class="mb-4 text-lg"></p>
             <p id="alert-time" class="text-sm text-light mb-4"></p>
             <div class="flex flex-col gap-2">
-                <a id="alert-btn-email" href="#" class="btn-primary w-full">📧 Enviar Email Agora</a>
+                <a id="alert-btn-email" href="#" class="btn-primary w-full">📧 Enviar Email Agora (Manual)</a>
                 <button class="btn-outline w-full" onclick="closeModal('modal-alert')">Fechar</button>
             </div>
         </div>
     </div>
 
-    <!-- Script Principal com Cache Busting -->
-    <script src="script.js?v=12.7"></script>
+    <!-- Script Principal -->
+    <script src="script.js?v=12.9"></script>
 </body>
 </html>

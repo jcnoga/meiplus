@@ -3,12 +3,15 @@ const DEFAULT_URL_DAS = "https://www8.receita.fazenda.gov.br/SimplesNacional/Apl
 const DB_KEY = 'MEI_SYSTEM_V12_8'; 
 const ADMIN_EMAILS = ['jcnvap@gmail.com', 'jcnval@gmail.com']; 
 
+// --- CONFIGURAÇÃO DE EMAIL VIA CLOUD FUNCTION (BACKEND FIREBASE) ---
+// URL obtida da sua imagem do console do Google Cloud
+const CLOUD_FUNCTION_URL = "https://testemanualemail-cg2cq35buq-uc.a.run.app";
+
 const LIC_PAD_VAL = 13;
 const LIC_MULT_FACTOR = 9;
 const LIC_YEAR_BASE = 1954;
 
-// ATENÇÃO: Se estiver usando o Firebase do tutorial, ele pode ter limites.
-// O ideal é criar seu próprio projeto no Firebase e trocar estas chaves.
+// CONFIGURAÇÃO FIREBASE
 const firebaseConfig = {
   apiKey: "AIzaSyBhtwWew_DQNX2TZROUShZz4mjK57pRgQk",
   authDomain: "lembrete-d6c15.firebaseapp.com",
@@ -18,6 +21,7 @@ const firebaseConfig = {
   appId: "1:368296869868:web:c6189a5ab9634029a90ac9",
   measurementId: "G-F5TMMGPK9C"
 };
+
 const DataManager = {
     dbName: 'MEI_DB_HYBRID_V2',
     storeName: 'mei_data',
@@ -60,7 +64,6 @@ const DataManager = {
                 }
             } catch(e) { 
                 console.warn("Erro no Sync Cloud (Modo Offline Ativo):", e.code, e.message);
-                // Não alertar usuário a cada salvamento, apenas mudar status
                 this.updateSyncStatus(false);
             }
         } else {
@@ -115,12 +118,10 @@ const DataManager = {
     }
 };
 
-// Função Global Requerida
 async function saveData() {
     await DataManager.save(appData);
 }
 
-// Inicialização Firebase Segura
 if (typeof firebase !== 'undefined' && firebaseConfig.apiKey && firebaseConfig.apiKey !== "SUA_API_KEY_AQUI") {
     try { 
         firebase.initializeApp(firebaseConfig); 
@@ -147,28 +148,76 @@ let currentListingType = 'clients';
 let currentFinanceFilter = 'all';
 let currentView = 'dashboard';
 
+// --- FUNÇÃO AUXILIAR DE ENVIO AUTOMÁTICO (CLOUD FUNCTIONS) ---
+// Substituindo EmailJS pela chamada direta à função da sua imagem
+async function sendAutoEmail(to_email, subject, message, attachment_data = null, attachment_name = null) {
+    if (!navigator.onLine) {
+        return Promise.reject("Sem conexão com a internet.");
+    }
+
+    try {
+        // Prepara os dados para enviar para sua Cloud Function
+        const payload = {
+            to: to_email,          // Backend espera 'to' ou 'email'
+            email: to_email,       // Enviando ambos para garantir compatibilidade
+            subject: subject,
+            text: message,         // Texto simples
+            html: message.replace(/\n/g, '<br>'), // Versão HTML básica
+            attachment: attachment_data, // Base64 do arquivo
+            filename: attachment_name
+        };
+
+        const response = await fetch(CLOUD_FUNCTION_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Erro no servidor: ${response.status} ${response.statusText}`);
+        }
+
+        // Se a função retornar sucesso
+        return true;
+
+    } catch (error) {
+        console.warn("Falha ao chamar Cloud Function:", error);
+        throw error; // Repassa o erro para acionar o fallback (mailto)
+    }
+}
+
 async function init() {
-    const loadedData = await DataManager.load();
-    if (loadedData) appData = loadedData;
-    
-    if (!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
-    
-    const sessionUser = sessionStorage.getItem('mei_user_id');
-    
-    setTimeout(() => {
-        if (sessionUser) {
-            const user = appData.users.find(u => u.id === sessionUser);
-            if (user) { 
-                loginUser(user); 
+    try {
+        const loadedData = await DataManager.load();
+        if (loadedData) appData = loadedData;
+        
+        if (!appData.irrfTable || appData.irrfTable.length === 0) appData.irrfTable = JSON.parse(JSON.stringify(DEFAULT_IRRF));
+        
+        const sessionUser = sessionStorage.getItem('mei_user_id');
+        
+        // Garantia de que a tela de carregamento vai sair
+        setTimeout(() => {
+            if (sessionUser) {
+                const user = appData.users.find(u => u.id === sessionUser);
+                if (user) { 
+                    loginUser(user); 
+                } else {
+                    showAuth();
+                }
             } else {
                 showAuth();
             }
-        } else {
-            showAuth();
-        }
-        const loader = document.getElementById('loading-overlay');
-        if(loader) loader.style.display = 'none';
-    }, 500);
+            const loader = document.getElementById('loading-overlay');
+            if(loader) loader.style.display = 'none';
+        }, 500);
+    } catch(err) {
+        console.error("Erro crítico na inicialização:", err);
+        // Em caso de erro fatal, forçar a tela de login
+        document.getElementById('loading-overlay').style.display = 'none';
+        document.getElementById('auth-screen').classList.remove('hidden');
+    }
 }
 
 function showAuth() { 
@@ -220,7 +269,6 @@ async function manualSync() {
     try {
         if (!navigator.onLine) throw new Error("Sem conexão com a internet.");
         
-        // Teste de conexão com Auth
         if (!firebase.auth().currentUser) {
              throw new Error("Sessão Firebase expirada. Faça Logout e Login novamente com Google.");
         }
@@ -264,9 +312,7 @@ function toggleAuth(screen) {
 }
 
 function handleGoogleLogin() {
-    // Diagnóstico de ambiente
     console.log("Tentando login Google em: " + window.location.hostname);
-
     const provider = new firebase.auth.GoogleAuthProvider();
     firebase.auth().signInWithPopup(provider).then(async (result) => {
         const user = result.user;
@@ -289,12 +335,8 @@ function handleGoogleLogin() {
         loginUser(appUser);
     }).catch((error) => {
         console.error("Erro Google Auth:", error);
-        
         if (error.code === 'auth/unauthorized-domain') {
-            alert("ERRO CRÍTICO: DOMÍNIO NÃO AUTORIZADO NO FIREBASE.\n\n" +
-                  "O domínio '" + window.location.hostname + "' não está na lista de autorizados.\n\n" +
-                  "SOLUÇÃO:\n1. Vá no Firebase Console -> Authentication -> Settings -> Authorized Domains.\n" +
-                  "2. Adicione: " + window.location.hostname);
+            alert("ERRO CRÍTICO: DOMÍNIO NÃO AUTORIZADO NO FIREBASE.");
         } else if (error.code === 'auth/popup-closed-by-user') {
             alert("Login cancelado pelo usuário.");
         } else {
@@ -654,13 +696,30 @@ function saveRPA() {
 function sendRPAEmail() {
     const email = document.getElementById('rpa-prov-email').value;
     if(!email) return alert('Por favor, preencha o e-mail do autônomo.');
-    const compName = document.getElementById('rpa-comp-name').value;
+    
+    const compName = document.getElementById('rpa-comp-name').value || "Empresa";
     const desc = document.getElementById('rpa-desc').value;
     const val = document.getElementById('rpa-net').value;
     const date = document.getElementById('rpa-date').value.split('-').reverse().join('/');
     const subject = `Recibo RPA - ${compName}`;
-    const body = `Olá,\n\nSegue resumo do RPA emitido:\n\nServiço: ${desc}\nData: ${date}\nValor Líquido: ${val}\n\nAtt,\n${compName}`;
-    window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    const body = `Olá,\n\nSegue em anexo o RPA emitido.\n\nServiço: ${desc}\nData: ${date}\nValor Líquido: ${val}\n\nAtt,\n${compName}`;
+
+    // --- GERAÇÃO DO ANEXO (Utilizando funcionalidade existente exportRPADoc) ---
+    // Reutilizamos a estrutura HTML que o sistema já gera para criar o documento
+    const htmlContent = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>RPA</title></head><body><h2 style="text-align:center">RPA - ${compName}</h2><br><h3>1. Contratante</h3><p>Razão: ${compName}</p><p>CNPJ: ${document.getElementById('rpa-comp-cnpj').value}</p><hr><h3>2. Autônomo</h3><p>Nome: ${document.getElementById('rpa-prov-name').value}</p><p>CPF: ${document.getElementById('rpa-prov-cpf').value}</p><hr><h3>3. Serviço</h3><p>${document.getElementById('rpa-desc').value}</p><p>Data: ${document.getElementById('rpa-date').value}</p><hr><h3>4. Valores</h3><p>Bruto: R$ ${document.getElementById('rpa-value').value}</p><p>Líquido: ${document.getElementById('rpa-net').value}</p></body></html>`;
+    
+    // Converte para Base64 para enviar como anexo via Cloud Function
+    const base64Attachment = btoa(unescape(encodeURIComponent(htmlContent)));
+    const fileName = `RPA_${compName.replace(/[^a-zA-Z0-9]/g, '_')}.doc`;
+
+    // Tenta envio automático com anexo via Cloud Function
+    sendAutoEmail(email, subject, body, base64Attachment, fileName)
+        .then(() => alert("E-mail do RPA enviado automaticamente com sucesso (Anexo incluído)!"))
+        .catch((err) => {
+            console.warn("Falha no envio automático, abrindo cliente de email.", err);
+            // Fallback: Mailto não suporta anexo direto via JS browser, abre apenas o corpo
+            window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        });
 }
 
 function toggleRPAHistory() {
@@ -738,7 +797,6 @@ function saveCrudItem(e) {
         const id = document.getElementById('crud-id').value;
         const els = e.target.elements;
         
-        // Uso seguro de elementos do formulário (evita erro se o campo não existir)
         const item = {
             id: id || 'i_'+Date.now(),
             name: els['name'] ? els['name'].value : '',
@@ -1055,6 +1113,14 @@ function triggerAlert(r) {
     const mailtoLink = `mailto:${r.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     document.getElementById('alert-btn-email').href = mailtoLink;
 
+    // Tenta envio automático via Cloud Function
+    sendAutoEmail(r.email, subject, body)
+        .then(() => {
+            console.log("Email automático enviado com sucesso.");
+            document.getElementById('alert-msg').innerText += "\n\n(✅ Email enviado automaticamente)";
+        })
+        .catch(err => console.warn("Envio automático falhou:", err));
+
     document.getElementById('modal-alert').classList.remove('hidden');
     try { new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg').play(); } catch(e){}
 }
@@ -1113,7 +1179,14 @@ function saveReminder(e) {
         if (immediate) {
             const subject = `Lembrete: ${title}`;
             const body = `Olá,\n\nEste é um lembrete configurado:\n\n${msg}\n\nData: ${new Date(dateTime).toLocaleString()}\nPeriodicidade: ${period}`;
-            window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+            
+            // Envia via Cloud Function
+            sendAutoEmail(email, subject, body)
+                .then(() => alert('Lembrete Salvo e Email enviado com sucesso!'))
+                .catch((err) => {
+                    console.warn("Falha no envio auto, abrindo mailto.", err);
+                    window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                });
         } else {
             alert('Lembrete Salvo!');
         }
