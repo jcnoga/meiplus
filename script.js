@@ -12,13 +12,13 @@ const LIC_YEAR_BASE = 1954;
 
 // CONFIGURAÇÃO FIREBASE
 const firebaseConfig = {
-  apiKey: "AIzaSyBhtwWew_DQNX2TZROUShZz4mjK57pRgQk",
-  authDomain: "lembrete-d6c15.firebaseapp.com",
-  projectId: "lembrete-d6c15",
-  storageBucket: "lembrete-d6c15.firebasestorage.app",
-  messagingSenderId: "368296869868",
-  appId: "1:368296869868:web:c6189a5ab9634029a90ac9",
-  measurementId: "G-F5TMMGPK9C"
+  apiKey: "AIzaSyD1DAyy5mAGrQzWdJcvIYIZ-34qTMhvl_Q",
+  authDomain: "gen-lang-client-0194851437.firebaseapp.com",
+  projectId: "gen-lang-client-0194851437",
+  storageBucket: "gen-lang-client-0194851437.firebasestorage.app",
+  messagingSenderId: "280564704062",
+  appId: "1:280564704062:web:7abe6061a86728fdd1026f",
+  measurementId: "G-EBXGEVJVP3"
 };
 
 const DataManager = {
