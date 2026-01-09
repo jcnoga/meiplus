@@ -733,7 +733,7 @@ function sendRPAEmail() {
     const fileName = `RPA_${compName.replace(/[^a-zA-Z0-9]/g, '_')}.doc`;
 
     sendAutoEmail(email, subject, body, base64Attachment, fileName)
-        .then(() => alert("E-mail do RPA enviado automaticamente com sucesso (Anexo incluído)!"))
+        .then(() => console.log("E-mail do RPA enviado automaticamente com sucesso (Anexo incluído)!"))
         .catch((err) => {
             console.warn("Falha no envio automático, abrindo cliente de email.", err);
             window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -995,22 +995,27 @@ function checkReminders() {
         const target = new Date(r.nextRun);
         
         if (now >= target) {
-            // Disparar Alerta
+            // Atualizar UI do Modal (apenas para fallback ou modo manual)
             document.getElementById('alert-title').innerText = r.title;
             document.getElementById('alert-msg').innerText = r.msg;
             document.getElementById('alert-time').innerText = new Date(r.nextRun).toLocaleString();
             
-            // Link para envio manual de email no alerta
             const mailto = `mailto:${r.email}?subject=${encodeURIComponent(r.title)}&body=${encodeURIComponent(r.msg)}`;
             document.getElementById('alert-btn-email').href = mailto;
-            
-            document.getElementById('modal-alert').classList.remove('hidden');
 
-            // Tentar envio automático se configurado (Cloud Function)
+            // LÓGICA DE ENVIO AUTOMÁTICO vs MANUAL
             if(r.immediate) {
+                // Modo Automático: Tenta enviar silenciosamente
                 sendAutoEmail(r.email, r.title, r.msg)
-                    .then(() => console.log(`Lembrete ${r.title} enviado via API`))
-                    .catch(e => console.error("Falha envio auto lembrete:", e));
+                    .then(() => console.log(`Lembrete ${r.title} enviado via API (Silencioso)`))
+                    .catch(e => {
+                        console.error("Falha envio auto lembrete, exibindo modal manual:", e);
+                        // Fallback: Abre o modal se o envio automático falhar
+                        document.getElementById('modal-alert').classList.remove('hidden');
+                    });
+            } else {
+                // Modo Manual: Exibe o modal sempre
+                document.getElementById('modal-alert').classList.remove('hidden');
             }
 
             // Atualizar próxima execução
@@ -1024,7 +1029,6 @@ function checkReminders() {
                 case 'yearly': next.setFullYear(next.getFullYear() + 1); break;
                 case 'once': 
                 default:
-                    // Remove se for uma vez só
                     reminders.splice(reminders.indexOf(r), 1);
                     saveData();
                     renderRemindersList();
@@ -1086,7 +1090,7 @@ function saveReminder(e) {
         // Se marcado "Enviar imediatamente" e for novo
         if (rem.immediate && !id) {
             sendAutoEmail(rem.email, rem.title, rem.msg)
-                .then(() => alert("E-mail disparado com sucesso!"))
+                .then(() => console.log("E-mail imediato disparado com sucesso!")) // Alert removido para fluxo silencioso
                 .catch(err => alert("Lembrete salvo, mas erro no envio automático: " + err));
         }
 
